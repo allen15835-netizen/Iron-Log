@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html><head>
+<html lang="en"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -18,6 +18,7 @@ button{font-family:'Outfit',sans-serif;cursor:pointer}
 textarea{font-family:monospace}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 ::-webkit-scrollbar{display:none}
 </style>
 </head>
@@ -27,9 +28,10 @@ textarea{font-family:monospace}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script type="text/babel">
+ 
 const { useState, useEffect, useRef } = React;
-
-// ─── IndexedDB Storage ──────────────────────────────────────────────
+ 
+// ─── IndexedDB ──────────────────────────────────────────────────────
 const DB_NAME = "IronLogDB";
 const DB_STORE = "appdata";
 const openDB = () => new Promise((resolve, reject) => {
@@ -52,464 +54,624 @@ const dbGet = async (key) => {
   return new Promise((res, rej) => {
     const tx = db.transaction(DB_STORE, "readonly");
     const req = tx.objectStore(DB_STORE).get(key);
-    req.onsuccess = () => res(req.result ?? null);
+    req.onsuccess = () => res(req.result !== undefined ? req.result : null);
     req.onerror = (e) => rej(e.target.error);
   });
 };
-
+ 
 // ─── Periodization ──────────────────────────────────────────────────
 const PHASES = [
-  { name: "Foundation", weeks: [1,2,3], color: "#5ec98e", desc: "Rebuild patterns · High reps · Moderate load", icon: "▣" },
-  { name: "Build", weeks: [4,5,6], color: "#d4a04a", desc: "Add volume · Tighten reps · Push intensity", icon: "▲" },
-  { name: "Strength", weeks: [7,8,9], color: "#e86060", desc: "Heavy loads · Low reps · Peak output", icon: "◆" },
-  { name: "Deload", weeks: [10], color: "#70b8e0", desc: "Cut volume 40% · Recover · Reset", icon: "○" },
+  { name: "Foundation", weeks: [1,2,3], color: "#5ec98e", desc: "Higher reps - groove patterns", icon: "A" },
+  { name: "Build", weeks: [4,5,6], color: "#d4a04a", desc: "Base loads - push intensity", icon: "B" },
+  { name: "Strength", weeks: [7,8,9], color: "#e86060", desc: "Heavy - low reps - peak output", icon: "C" },
+  { name: "Deload", weeks: [10], color: "#70b8e0", desc: "Cut a set - recover - reset", icon: "D" },
 ];
 const getPhase = (wn) => { const cw = ((wn-1)%10)+1; return PHASES.find(p=>p.weeks.includes(cw))||PHASES[0]; };
 const getCycleWeek = (wn) => ((wn-1)%10)+1;
-const phaseRx = (s, r, cat, ph) => {
-  if(cat==="warmup"||cat==="mobility"||cat==="divider") return {sets:s,reps:r};
-  const p=ph.name;
-  if(cat==="core"){ return p==="Deload"?{sets:Math.max(1,s-1),reps:r}:(p==="Build"||p==="Strength")?{sets:s+1,reps:r}:{sets:s,reps:r}; }
-  if(p==="Foundation") return {sets:s,reps:bumpR(r,2)};
-  if(p==="Build") return {sets:s+1,reps:r};
-  if(p==="Strength") return {sets:s,reps:dropR(r,2)};
-  if(p==="Deload") return {sets:Math.max(2,s-1),reps:r};
-  return {sets:s,reps:r};
-};
 const bumpR = (r, n) => {
-  if (typeof r !== "string" || /sec|yd|each way/.test(r)) return r;
+  if (typeof r !== "string" || /sec|yd|breath|each way/.test(r)) return r;
   const m = r.match(/^(\d+)-(\d+)/);
-  if (m) return (+m[1]+n) + "-" + (+m[2]+n);
+  if (m) return (+m[1]+n) + "-" + (+m[2]+n) + r.slice(m[0].length);
   const m2 = r.match(/^(\d+)/);
   if (m2) return r.replace(m2[1], String(+m2[1]+n));
   return r;
 };
 const dropR = (r, n) => {
-  if (typeof r !== "string" || /sec|yd|each way/.test(r)) return r;
+  if (typeof r !== "string" || /sec|yd|breath|each way/.test(r)) return r;
   const m = r.match(/^(\d+)-(\d+)/);
-  if (m) return Math.max(3,+m[1]-n) + "-" + Math.max(5,+m[2]-n);
+  if (m) return Math.max(3,+m[1]-n) + "-" + Math.max(4,+m[2]-n) + r.slice(m[0].length);
   const m2 = r.match(/^(\d+)/);
   if (m2) return r.replace(m2[1], String(Math.max(3,+m2[1]-n)));
   return r;
 };
-
-// ─── Brian's Workout ────────────────────────────────────────────────
+const phaseRx = (s, r, cat, ph) => {
+  if (cat !== "main" && cat !== "core") return { sets: s, reps: r };
+  const p = ph.name;
+  if (cat === "core") {
+    if (p === "Deload") return { sets: Math.max(1, s-1), reps: r };
+    return { sets: s, reps: r };
+  }
+  if (p === "Foundation") return { sets: s, reps: bumpR(r, 2) };
+  if (p === "Strength") return { sets: s, reps: dropR(r, 2) };
+  if (p === "Deload") return { sets: Math.max(2, s-1), reps: r };
+  return { sets: s, reps: r };
+};
+const topOfRange = (repStr) => {
+  if (typeof repStr !== "string") return 0;
+  if (/sec|yd|breath/.test(repStr)) return 0;
+  const m = repStr.match(/(\d+)\s*-\s*(\d+)/);
+  if (m) return +m[2];
+  const m2 = repStr.match(/^(\d+)/);
+  return m2 ? +m2[1] : 0;
+};
+ 
+// ─── Daily Corrective Primer (every session) ────────────────────────
+const PRIMER = [
+  { name: "— DAILY CORRECTIVE PRIMER (5 min) —", sets: 0, reps: "", form: "", cat: "divider" },
+  { name: "90/90 Breathing (Left Rib Focus)", sets: 2, reps: "5 breaths", form: "On back, feet on wall, knees and hips at 90. FULL exhale until left ribs drop and internally rotate, pause 3 sec, inhale into back and sides without flaring. The single best rib flare fix - daily frequency is what corrects it.", cat: "warmup" },
+  { name: "Dead Bug", sets: 2, reps: "8 each side", form: "Back FLAT - ribs down, tailbone slightly tucked. Extend opposite arm/leg slowly. Anti-extension for APT correction. If low back arches, shorten range.", cat: "warmup" },
+  { name: "Banded Glute Bridge", sets: 2, reps: "12", form: "Band above knees, push knees out. Posterior pelvic tilt FIRST, then drive up. Squeeze glutes 2 sec at top. Wakes up the glutes that fix your APT.", cat: "warmup" },
+];
+ 
+const LEG_PREP = [
+  { name: "— IT BAND PREP —", sets: 0, reps: "", form: "", cat: "divider" },
+  { name: "Foam Roll: TFL", sets: 1, reps: "60 sec each", form: "Upper outer hip - NOT the IT band itself. The TFL is where the tension originates. Pause on tender spots 10-15 sec.", cat: "warmup" },
+  { name: "Clamshells (Banded)", sets: 2, reps: "15 each", form: "Band above knees, side-lying. Rotate top knee up, squeeze glute med at top. Your primary IT band prevention.", cat: "warmup" },
+  { name: "Single-Leg Glute Bridge", sets: 2, reps: "12 each", form: "One foot down, other leg extended. Drive through heel, full hip extension. Corrects side-to-side imbalance that loads the IT band.", cat: "warmup" },
+];
+ 
+// ─── Brian's Workout v2 — 5-Day Strength ────────────────────────────
 const BRIANS_WORKOUT = {
+  rev: 2,
   name: "Brian's Workout",
-  desc: "6-day leg-biased PPL. Legs 3x/week, upper 2x/week. Core & mobility every session. Auto-periodized. L4/L5 disc-safe.",
+  desc: "5-day strength split. Compounds at 6-8, accessories 8-10, isolation 10-12. Daily corrective primer (APT + left rib flare). IT band prep every leg day. Extended rehab block on Day 5. L4/L5 disc-safe throughout. 60-90 min sessions.",
   profile: { height: "6'1\"", weight: "173lb", age: "34y" },
   days: {
-    "Day 1 — Push (Full Chest + Shoulders)": [
-      {n:"Smith Machine Incline Press",s:4,r:"8-10",f:"30° incline. Retract scaps, drive through upper chest. 2-3 sec eccentric.",c:"main"},
-      {n:"Flat DB Press",s:4,r:"8-10",f:"Flat bench, DBs at chest width. Full stretch, squeeze at top. Mid-chest.",c:"main"},
-      {n:"Low-to-High Cable Flye",s:3,r:"12-15",f:"Cables lowest. Squeeze at forehead height. Upper pec contraction.",c:"main"},
-      {n:"Decline Cable Flye",s:3,r:"12-15",f:"Cables highest. Hands at hip level. Lower pec fibers.",c:"main"},
-      {n:"Landmine Press",s:3,r:"10-12 each",f:"Single arm, staggered stance. Rotational stability + upper chest.",c:"main"},
-      {n:"Seated DB OHP",s:3,r:"10-12",f:"Bench 80°. Full lockout, controlled descent to ear level.",c:"main"},
-      {n:"Cable Lateral Raises",s:3,r:"15",f:"Behind-body path. Shoulder height, 1-sec pause. Strict.",c:"main"},
-      {n:"Tricep Rope Pushdowns",s:3,r:"12-15",f:"Elbows pinned. Spread rope at bottom, squeeze.",c:"main"},
-      {n:"— CORE FINISHER —",s:0,r:"",f:"",c:"d"},
-      {n:"Dead Bug",s:3,r:"10 each side",f:"Back flat. Extend opposite arm/leg slowly. L4/L5-safe.",c:"core"},
-      {n:"Pallof Press ISO Hold",s:2,r:"20 sec each",f:"Cable chest height, press and hold. Anti-rotation.",c:"core"},
-      {n:"— MOBILITY —",s:0,r:"",f:"",c:"d"},
-      {n:"Banded Shoulder Dislocates",s:2,r:"15",f:"Light band, wide grip overhead and behind. Opens t-spine.",c:"mob"},
-      {n:"Open Book Stretch",s:2,r:"8 each side",f:"Side-lying, knees stacked. Open top arm. T-spine rotation.",c:"mob"},
-      {n:"Wall Slide",s:2,r:"10",f:"Back/forearms on wall. Slide up maintaining contact. Scap mobility.",c:"mob"},
+    "Day 1 — Lower: Squat Pattern": [
+      ...PRIMER,
+      ...LEG_PREP,
+      { name: "— WORKING SETS —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Front Squat", sets: 3, reps: "6-8", form: "Clean grip or cross-arm. Elbows HIGH. Core braced like a belt. Upright torso keeps load anterior - safer for L4/L5. This is your strength anchor - progress the load.", cat: "main" },
+      { name: "Pendulum Squat", sets: 3, reps: "8-10", form: "ZERO spinal compression. Go deep, drive hard out of the hole. Load it up - the machine handles the spine.", cat: "main" },
+      { name: "Bulgarian Split Squat", sets: 3, reps: "8 each", form: "Rear foot on bench, slight forward lean. Knee tracks over pinky toe. Heavy DBs - unilateral strength.", cat: "main" },
+      { name: "Barbell Hip Thrust", sets: 3, reps: "6-8", form: "Bar padded at hip crease. Posterior tilt at lockout - chin tucked, ribs down. Heavy. Glute strength is APT correction under load.", cat: "main" },
+      { name: "Cable Hip Abduction", sets: 3, reps: "12-15 each", form: "Ankle cuff, low cable. Controlled, 1-sec pause at top. Glute med/min - protects knees and IT band.", cat: "main" },
+      { name: "Standing Calf Raise", sets: 3, reps: "10-12", form: "Full stretch at bottom, explode up, 2-sec squeeze. Gastrocnemius.", cat: "main" },
+      { name: "— CORE —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Suitcase Carry", sets: 3, reps: "40 yd each", form: "Heavy DB one hand, walk tall. Anti-lateral flexion - obliques and QL. Shoulders level. L4/L5 safe.", cat: "core" },
+      { name: "— MOBILITY (APT FOCUS) —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Couch Stretch", sets: 2, reps: "45 sec each", form: "Rear knee against wall. SQUEEZE the glute on the stretched side - that is what unlocks the hip flexor. Direct APT work.", cat: "mobility" },
+      { name: "Hip Flexor PAILs/RAILs", sets: 2, reps: "45 sec each", form: "Half-kneeling. PAIL: push into the stretch 10 sec. RAIL: pull out of it 10 sec. Builds strength at end range - makes the APT fix stick.", cat: "mobility" },
     ],
-    "Day 2 — Legs: Quad & Glute": [
-      {n:"— 10-MIN WARM-UP —",s:0,r:"",f:"",c:"d"},
-      {n:"Foam Roll: Quads + Adductors",s:1,r:"60 sec each",f:"Slow rolls, pause on tender spots.",c:"wu"},
-      {n:"Banded Lateral Walk",s:2,r:"15 each way",f:"Mini band above knees. Fire up glute med.",c:"wu"},
-      {n:"90/90 Hip Switch",s:2,r:"8 each side",f:"Rotate between hip positions. Open capsule.",c:"wu"},
-      {n:"Goblet Squat (Primer)",s:2,r:"10",f:"DB at chest, sit deep, 2-sec pause. Warm-up only.",c:"wu"},
-      {n:"Glute Bridge March",s:2,r:"10 each",f:"Bridge up, march legs. Glute activation.",c:"wu"},
-      {n:"— WORKING SETS —",s:0,r:"",f:"",c:"d"},
-      {n:"Front Squat",s:4,r:"8-10",f:"Elbows HIGH. Core braced. Upright torso. Safer for L4/L5.",c:"main"},
-      {n:"Pendulum Squat",s:4,r:"10-12",f:"ZERO spinal compression. Go deep, squeeze quads.",c:"main"},
-      {n:"Bulgarian Split Squat",s:3,r:"10 each",f:"Rear foot on bench. Quad + glute unilateral.",c:"main"},
-      {n:"Barbell Hip Thrust",s:4,r:"10-12",f:"Drive through heels, FULL hip extension. Glute max.",c:"main"},
-      {n:"Cable Hip Abduction",s:3,r:"15 each",f:"Ankle cuff, low cable. Glute med/min. 1-sec pause.",c:"main"},
-      {n:"Standing Calf Raise",s:4,r:"10-12",f:"Full stretch bottom. Explode up, 2-sec squeeze.",c:"main"},
-      {n:"— CORE —",s:0,r:"",f:"",c:"d"},
-      {n:"Suitcase Carry",s:3,r:"40 yd each",f:"Heavy DB, walk tall. Anti-lateral flexion. L4/L5 safe.",c:"core"},
-      {n:"— MOBILITY —",s:0,r:"",f:"",c:"d"},
-      {n:"Couch Stretch",s:2,r:"45 sec each",f:"Rear knee against wall. Squeeze glute. Hip flexor.",c:"mob"},
-      {n:"Wall Ankle Dorsiflexion",s:2,r:"15 each",f:"Foot 4\" from wall, knee over toes. Feeds squat depth.",c:"mob"},
-      {n:"Hip Flexor PAILs/RAILs",s:2,r:"45 sec each",f:"Half-kneeling. PAIL push, RAIL pull. End-range.",c:"mob"},
+    "Day 2 — Push": [
+      ...PRIMER,
+      { name: "— WORKING SETS —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Smith Machine Incline Press", sets: 3, reps: "6-8", form: "30-degree incline. Retract scaps, lower to upper chest, drive hard. 2-sec eccentric. Strength anchor for push day.", cat: "main" },
+      { name: "Flat DB Press", sets: 3, reps: "6-8", form: "Full stretch at bottom, drive up and slightly in. Heavy - this is a strength lift now.", cat: "main" },
+      { name: "Seated DB OHP", sets: 3, reps: "8-10", form: "Bench at 80. Ribs DOWN as you press - do not flare to finish the rep. Full lockout, control to ear level.", cat: "main" },
+      { name: "Low-to-High Cable Flye", sets: 3, reps: "10-12", form: "Cables lowest. Squeeze hands together at forehead height. Upper pec contraction.", cat: "main" },
+      { name: "Decline Cable Flye", sets: 3, reps: "10-12", form: "Cables highest. Downward arc, hands together at hip level. Lower pec fibers.", cat: "main" },
+      { name: "Cable Lateral Raise", sets: 3, reps: "12", form: "Behind-the-body path. Shoulder height, 1-sec pause. Strict - no traps.", cat: "main" },
+      { name: "Tricep Rope Pushdown", sets: 3, reps: "10-12", form: "Elbows pinned. Spread the rope at the bottom, squeeze hard.", cat: "main" },
+      { name: "— CORE (RIB FLARE) —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Pallof Press", sets: 3, reps: "10 each side", form: "Cable at chest height. Press out, hold 2 sec, resist rotation. Extra attention pressing away from the LEFT - obliques pull that flared rib down.", cat: "core" },
+      { name: "— MOBILITY —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Open Book Stretch", sets: 2, reps: "8 each side", form: "Side-lying, knees stacked. Open top arm, follow with eyes. T-spine rotation - feeds pressing and rib position.", cat: "mobility" },
+      { name: "Wall Slide", sets: 2, reps: "10", form: "Back and forearms on wall, RIBS DOWN. Slide arms overhead without losing contact or flaring. Scap mobility with rib control.", cat: "mobility" },
     ],
-    "Day 3 — Pull (Hinge Emphasis)": [
-      {n:"Seal Row",s:4,r:"8-10",f:"Chest on bench. Pull to ribcage, squeeze scaps. ZERO spinal load.",c:"main"},
-      {n:"Single-Arm DB Row",s:3,r:"10-12 each",f:"Knee on bench, flat back. Row to hip. Core braced.",c:"main"},
-      {n:"Cable Pullover",s:3,r:"12-15",f:"Slight hinge, arms straight. Overhead to hips. Feel lats.",c:"main"},
-      {n:"Chest-Supported DB Row",s:3,r:"10-12",f:"Incline bench, chest on pad. Pure lat/rhomboid.",c:"main"},
-      {n:"Face Pulls",s:3,r:"15-20",f:"High cable, external rotation. 2-sec pause. Rear delts.",c:"main"},
-      {n:"Barbell Curl",s:3,r:"10-12",f:"Elbows pinned. 3-sec negative. No body English.",c:"main"},
-      {n:"Hammer Curls",s:3,r:"12 each",f:"Alternating, neutral grip. Brachialis emphasis.",c:"main"},
-      {n:"— CORE —",s:0,r:"",f:"",c:"d"},
-      {n:"Bird Dog",s:3,r:"10 each side",f:"Extend opposite arm/leg, hold 2 sec. McGill-approved.",c:"core"},
-      {n:"Plank Shoulder Tap",s:2,r:"12 each side",f:"High plank, tap opposite shoulder. Anti-rotation.",c:"core"},
-      {n:"— MOBILITY —",s:0,r:"",f:"",c:"d"},
-      {n:"Thread the Needle",s:2,r:"8 each side",f:"Quadruped. Reach under then open. T-spine rotation.",c:"mob"},
-      {n:"Standing Hamstring Sweep",s:2,r:"30 sec each",f:"Foot on box, hinge forward. Posterior chain opener.",c:"mob"},
-      {n:"Cat-Cow + Segmental Roll",s:2,r:"10",f:"Alternate flexion/extension. Slow segmental roll.",c:"mob"},
+    "Day 3 — Lower: Hinge + Power": [
+      ...PRIMER,
+      ...LEG_PREP,
+      { name: "— WORKING SETS —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Stiff-Leg DB RDL", sets: 3, reps: "6-8", form: "Slight knee bend LOCKED. Hinge until deep hamstring stretch, drive hips forward. FLAT back non-negotiable with L4/L5. Strength anchor for hinge - progress load carefully.", cat: "main" },
+      { name: "Leg Curl (Prone)", sets: 3, reps: "8-10", form: "Squeeze at top, 3-sec negative. Hips stay glued to the pad.", cat: "main" },
+      { name: "Walking Lunges", sets: 3, reps: "10 each", form: "Long stride, upright torso, heavy DBs. Push off the front heel.", cat: "main" },
+      { name: "Cable Pull-Through", sets: 3, reps: "10-12", form: "Face away from low cable, rope between legs. Hinge and SNAP forward. Same pattern as a KB swing with zero spinal compression.", cat: "main" },
+      { name: "Back Hyperextension", sets: 3, reps: "12", form: "Rise to NEUTRAL only - never past flat. Squeeze erectors and glutes 1 sec. Builds the deep stabilizers protecting L4/L5.", cat: "main" },
+      { name: "Seated Calf Raise", sets: 3, reps: "12-15", form: "Full stretch, 2-sec squeeze at top. Soleus - explosive push-off muscle.", cat: "main" },
+      { name: "— POWER —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Box Jumps", sets: 3, reps: "5", form: "Explode up, land soft, STEP DOWN - never jump down with your disc history. Full hip extension at the top.", cat: "main" },
+      { name: "Med Ball Rotational Slam", sets: 3, reps: "8 each side", form: "Rotate from the hips, slam diagonally across the body. Cross-plane power - this feeds your golf swing.", cat: "main" },
+      { name: "— CORE (RIB FLARE) —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Tall Kneeling Cable Chop", sets: 3, reps: "10 each side", form: "Kneeling kills momentum - pure rotational core. High-to-low arc, ribs stacked over pelvis the whole time.", cat: "core" },
+      { name: "— MOBILITY —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "90/90 Hip CARs", sets: 2, reps: "8 each side", form: "Seated 90/90, lift the knee, trace the largest circle you can. Hip capsule health - protects the IT band chain.", cat: "mobility" },
+      { name: "Pigeon Stretch", sets: 2, reps: "45 sec each", form: "Front shin across the body, lean forward gently. Deep external rotator stretch.", cat: "mobility" },
     ],
-    "Day 4 — Legs: Posterior + Power": [
-      {n:"— WARM-UP —",s:0,r:"",f:"",c:"d"},
-      {n:"Foam Roll: Hams + Glutes",s:1,r:"60 sec each",f:"Slow rolls. Prep posterior chain.",c:"wu"},
-      {n:"Banded Glute Bridge",s:2,r:"15",f:"Band above knees, push out at top. Glute primer.",c:"wu"},
-      {n:"Leg Swings",s:2,r:"10 each way",f:"Front/back + lateral. Dynamic hip opener.",c:"wu"},
-      {n:"— WORKING SETS —",s:0,r:"",f:"",c:"d"},
-      {n:"Stiff-Leg DB RDL",s:4,r:"10-12",f:"Hinge until hamstring stretch. FLAT back. L4/L5 safe.",c:"main"},
-      {n:"Leg Curl (Prone)",s:4,r:"10-12",f:"Squeeze at top, 3-sec negative. Hips on pad.",c:"main"},
-      {n:"Walking Lunges",s:3,r:"12 each",f:"Long stride, upright torso. DB load.",c:"main"},
-      {n:"Cable Pull-Through",s:3,r:"12-15",f:"Hip hinge snap. ZERO compression. L4/L5 safe.",c:"main"},
-      {n:"Back Hyperextension",s:3,r:"12-15",f:"Rise to neutral only. Squeeze erectors. BW first 2-3 weeks.",c:"main"},
-      {n:"Seated Calf Raise",s:4,r:"15-20",f:"Full stretch, 2-sec squeeze. Targets soleus.",c:"main"},
-      {n:"— POWER —",s:0,r:"",f:"",c:"d"},
-      {n:"Box Jumps",s:4,r:"5",f:"Soft landing, STEP DOWN. Full hip extension. Quality.",c:"main"},
-      {n:"Med Ball Rotational Slam",s:3,r:"8 each side",f:"Rotate from hips, slam diagonally. Cross-plane.",c:"main"},
-      {n:"Lateral Bound",s:3,r:"8 each side",f:"Single-leg lateral jump, stick 2 sec.",c:"main"},
-      {n:"— CORE —",s:0,r:"",f:"",c:"d"},
-      {n:"Tall Kneeling Cable Chop",s:3,r:"10 each side",f:"Pure oblique work. High-to-low arc.",c:"core"},
-      {n:"Cable Woodchop Low-to-High",s:3,r:"10 each side",f:"Rotate from hips. Anti-rotation core.",c:"core"},
-      {n:"— MOBILITY —",s:0,r:"",f:"",c:"d"},
-      {n:"90/90 Hip CARs",s:2,r:"8 each side",f:"Largest circle. Controlled articular rotations.",c:"mob"},
-      {n:"Pigeon Stretch",s:2,r:"45 sec each",f:"Front shin across. Deep external rotator.",c:"mob"},
-      {n:"Adductor Rockback",s:2,r:"10 each side",f:"One leg extended, rock back. Inner thigh.",c:"mob"},
+    "Day 4 — Pull": [
+      ...PRIMER,
+      { name: "— WORKING SETS —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Seal Row", sets: 3, reps: "6-8", form: "Chest on elevated bench. Pull to ribcage, squeeze scaps 1 sec. ZERO spinal load. Strength anchor for pull day - go heavy.", cat: "main" },
+      { name: "Single-Arm DB Row", sets: 3, reps: "8-10 each", form: "Knee and hand on bench, flat back. Row to the hip, not the shoulder. Heavy.", cat: "main" },
+      { name: "Lat Pulldown", sets: 3, reps: "8-10", form: "Wide grip to upper chest. Squeeze the lats at the bottom, control the return.", cat: "main" },
+      { name: "Cable Pullover", sets: 3, reps: "10-12", form: "Slight hinge, arms nearly straight. Overhead to hips - full lat stretch and contraction.", cat: "main" },
+      { name: "Face Pulls", sets: 3, reps: "12-15", form: "High cable, pull to ears with external rotation. 2-sec pause. Rear delts and rotator cuff insurance.", cat: "main" },
+      { name: "Barbell Curl", sets: 3, reps: "8-10", form: "Elbows pinned, 3-sec negative. No body English.", cat: "main" },
+      { name: "Hammer Curls", sets: 3, reps: "10 each", form: "Alternating, neutral grip. Brachialis and forearm tie-in.", cat: "main" },
+      { name: "— CORE —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Bird Dog", sets: 3, reps: "10 each side", form: "Extend opposite arm/leg, hold 2 sec. Hips square, ribs down. McGill-approved for disc recovery.", cat: "core" },
+      { name: "— MOBILITY —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Thread the Needle", sets: 2, reps: "8 each side", form: "Quadruped. Reach under and through, then open to the ceiling. T-spine rotation without lumbar stress.", cat: "mobility" },
+      { name: "Cat-Cow + Segmental Roll", sets: 2, reps: "10", form: "Alternate full flexion/extension, then roll through one vertebra at a time. Spinal awareness for L4/L5.", cat: "mobility" },
     ],
-    "Day 5 — Upper: Push/Pull Hybrid": [
-      {n:"Incline DB Press",s:3,r:"10-12",f:"30° incline. Full stretch, upper chest. 2x frequency.",c:"main"},
-      {n:"Cable Row (Seated)",s:3,r:"10-12",f:"V-grip. Pull to lower chest, squeeze scaps. Stay upright.",c:"main"},
-      {n:"DB Arnold Press",s:3,r:"10-12",f:"Palms in, rotate as you press. All delt heads.",c:"main"},
-      {n:"Lat Pulldown",s:3,r:"10-12",f:"Wide grip to upper chest. Squeeze lats. Controlled.",c:"main"},
-      {n:"Flat Cable Flye",s:3,r:"12-15",f:"Cables mid-height. Constant tension. Mid-chest.",c:"main"},
-      {n:"Face Pulls",s:3,r:"15-20",f:"External rotation at end. Rear delts + cuff.",c:"main"},
-      {n:"Incline DB Curl",s:3,r:"12",f:"45° bench, arms hanging. Long head emphasis.",c:"main"},
-      {n:"Overhead Tricep Extension",s:3,r:"12-15",f:"Rope, face away. Elbows by ears. Long head.",c:"main"},
-      {n:"— CORE —",s:0,r:"",f:"",c:"d"},
-      {n:"Hanging Leg Raise",s:3,r:"10-12",f:"Dead hang, CURL pelvis up. Decompresses spine.",c:"core"},
-      {n:"Ab Wheel Rollout",s:3,r:"10",f:"Knees on pad. No low back arch. Brace hard.",c:"core"},
-      {n:"— MOBILITY —",s:0,r:"",f:"",c:"d"},
-      {n:"Banded Shoulder CARs",s:2,r:"8 each arm",f:"Largest circle. Full ROM exploration.",c:"mob"},
-      {n:"Prone Y-T-W Raises",s:2,r:"8 each pos",f:"Face down. Y/T/W. Scap stability.",c:"mob"},
-    ],
-    "Day 6 — Legs: Mobility & Volume": [
-      {n:"— DEEP MOBILITY —",s:0,r:"",f:"",c:"d"},
-      {n:"90/90 Hip CARs",s:3,r:"8 each side",f:"Full capsule exploration. More volume — make ROM gains.",c:"mob"},
-      {n:"Deep Squat Hold + T-Spine Reach",s:3,r:"30s + 5 each",f:"Deep squat, rotate arm to ceiling. Hip + thoracic.",c:"mob"},
-      {n:"Half-Kneeling Adductor Dip",s:2,r:"10 each side",f:"Shift laterally. Opens groin. Slow.",c:"mob"},
-      {n:"Supine Spinal Twist",s:2,r:"45 sec each",f:"Knee across body. Gravity. Safe for L4/L5.",c:"mob"},
-      {n:"Wall Ankle Dorsiflexion",s:2,r:"15 each",f:"Knee over toes. Feeds everything.",c:"mob"},
-      {n:"Hip Flexor PAILs/RAILs",s:2,r:"60 sec each",f:"Longer holds. PAIL 15 sec, RAIL 15 sec.",c:"mob"},
-      {n:"Frog Stretch",s:2,r:"45 sec",f:"Widen knees max. Rock forward/back. Adductor opener.",c:"mob"},
-      {n:"— VOLUME —",s:0,r:"",f:"",c:"d"},
-      {n:"Pendulum Squat (Wide)",s:3,r:"12-15",f:"Wide feet, toes out. Inner quads + adductors. Zero spinal load.",c:"main"},
-      {n:"Pendulum Squat (Tempo)",s:3,r:"15",f:"3-sec down, 1-sec pause, 2-sec up. TUT. Chase the pump.",c:"main"},
-      {n:"Single-Leg Leg Curl",s:3,r:"12 each",f:"Unilateral hamstring. Address imbalances.",c:"main"},
-      {n:"Leg Extension (Burnout)",s:2,r:"20-25",f:"Light, high reps. Drop set last set.",c:"main"},
-      {n:"Standing Calf Raise",s:3,r:"15-20",f:"Lighter than Day 2. Volume day.",c:"main"},
-      {n:"— CORE CIRCUIT —",s:0,r:"",f:"",c:"d"},
-      {n:"McGill Curl-Up",s:3,r:"10",f:"Hands under low back. Head/shoulders only. Disc-safe gold standard.",c:"core"},
-      {n:"Side Plank + Hip Dip",s:3,r:"12 each side",f:"Lower hip to floor and back. Obliques.",c:"core"},
-      {n:"Copenhagen Plank",s:2,r:"20 sec each",f:"Top leg on bench. Adductors + obliques.",c:"core"},
-      {n:"Back Hyperextension (Slow)",s:3,r:"15",f:"3-sec up, hold, 3-sec down. Stabilizer endurance.",c:"core"},
-      {n:"Bear Crawl Hold",s:2,r:"30 sec",f:"Knees 1\" off ground. Total core. Breathe.",c:"core"},
+    "Day 5 — Upper Hybrid + Rehab Block": [
+      ...PRIMER,
+      { name: "— WORKING SETS —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Incline DB Press", sets: 3, reps: "8-10", form: "30-degree incline, full stretch at the bottom. Second upper-chest stimulus of the week.", cat: "main" },
+      { name: "Chest-Supported DB Row", sets: 3, reps: "8-10", form: "Incline bench, chest on pad, neutral grip. Pure lat/rhomboid work - zero spinal load.", cat: "main" },
+      { name: "DB Arnold Press", sets: 3, reps: "10", form: "Palms in, rotate as you press. Ribs down at lockout. All three delt heads.", cat: "main" },
+      { name: "Flat Cable Flye", sets: 3, reps: "12", form: "Cables at mid-height. Constant tension through the full arc. Mid-chest pump.", cat: "main" },
+      { name: "Incline DB Curl", sets: 3, reps: "10", form: "45-degree bench, arms hanging. Deep stretch - long head emphasis.", cat: "main" },
+      { name: "Overhead Tricep Extension", sets: 3, reps: "10-12", form: "Rope, face away. Elbows by ears, full extension. Long head stretch.", cat: "main" },
+      { name: "— CORE —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Hanging Leg Raise", sets: 3, reps: "12", form: "Dead hang, CURL the pelvis up - posterior tilt under load is direct APT correction. Decompresses the spine too.", cat: "core" },
+      { name: "Ab Wheel Rollout", sets: 3, reps: "10", form: "Knees on pad. Roll to max stretch WITHOUT the low back arching - that anti-extension is the whole point for APT.", cat: "core" },
+      { name: "— REHAB BLOCK (15 MIN) —", sets: 0, reps: "", form: "", cat: "divider" },
+      { name: "Foam Roll: TFL", sets: 1, reps: "90 sec each", form: "Deep weekly dose. Upper outer hip, slow and deliberate, pause 15-20 sec on tight spots.", cat: "warmup" },
+      { name: "Clamshells (Banded)", sets: 3, reps: "20 each", form: "Highest volume of the week. Slow and controlled. Primary IT band prevention.", cat: "warmup" },
+      { name: "Single-Leg Glute Bridge", sets: 3, reps: "15 each", form: "Full extension, pause at the top. The stability that protects knees and IT band.", cat: "warmup" },
+      { name: "Copenhagen Plank", sets: 3, reps: "20 sec each", form: "Side plank, top leg on bench. Adductors plus obliques - hits the rib flare and hip stability in one move.", cat: "core" },
+      { name: "Figure-4 Stretch", sets: 2, reps: "45 sec each", form: "On back, ankle over opposite knee, pull toward chest. Deep glute and lateral chain stretch.", cat: "mobility" },
+      { name: "90/90 Hip CARs", sets: 2, reps: "8 each side", form: "Full capsule exploration. Make real ROM gains here.", cat: "mobility" },
+      { name: "Couch Stretch", sets: 2, reps: "60 sec each", form: "Longest hold of the week. Squeeze the glute the entire time. Direct APT work.", cat: "mobility" },
+      { name: "90/90 Breathing + Reach", sets: 2, reps: "8 breaths", form: "Same setup as the primer but add an arm reach to the ceiling at end-exhale. Pulls the left ribs down and forward. Finish the week with the fix.", cat: "mobility" },
     ],
   },
 };
-
-// Normalize exercise format
-const normEx = (ex) => ex.n ? { name:ex.n, sets:ex.s, reps:ex.r, form:ex.f, cat:{main:"main",core:"core",mob:"mobility",wu:"warmup",d:"divider"}[ex.c]||ex.c } : ex;
-const CAT_COLORS = { main:"#d4a04a", core:"#5ec98e", mobility:"#70b8e0", warmup:"#e8a060", divider:"#555" };
+ 
+const CAT_COLORS = { main: "#d4a04a", core: "#5ec98e", mobility: "#70b8e0", warmup: "#e8a060", divider: "#555" };
 const getToday = () => new Date().toISOString().split("T")[0];
-const fmtDate = (d) => new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
-const weeksSinceStart = (s,c) => Math.max(1,Math.floor((new Date(c+"T12:00:00")-new Date(s+"T12:00:00"))/864e5/7)+1);
-const getWeekKey = (d) => { const dt=new Date(d+"T12:00:00"),yr=dt.getFullYear(),j=new Date(yr,0,1); return yr+"-W"+String(Math.ceil(((dt-j)/864e5+j.getDay()+1)/7)).padStart(2,"0"); };
-
+const fmtDate = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+const weeksSinceStart = (s, c) => Math.max(1, Math.floor((new Date(c + "T12:00:00") - new Date(s + "T12:00:00")) / 864e5 / 7) + 1);
+const getWeekKey = (d) => { const dt = new Date(d + "T12:00:00"), yr = dt.getFullYear(), j = new Date(yr, 0, 1); return yr + "-W" + String(Math.ceil(((dt - j) / 864e5 + j.getDay() + 1) / 7)).padStart(2, "0"); };
+const defaultStart = () => { const d = new Date(); d.setDate(d.getDate() - 21); return d.toISOString().split("T")[0]; };
+const fmtTimer = (t) => Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
+ 
 // ═══ APP ════════════════════════════════════════════════════════════
 function App() {
-  const [screen,setScreen]=useState("loading");
-  const [program,setProgram]=useState(null);
-  const [data,setData]=useState({});
-  const [config,setConfig]=useState({startDate:getToday()});
-  const [completed,setCompleted]=useState({});
-  const [profile,setProfile]=useState({});
-  const [view,setView]=useState("train");
-  const [selDate,setSelDate]=useState(getToday());
-  const [selDay,setSelDay]=useState(0);
-  const [showForm,setShowForm]=useState({});
-  const [toast,setToast]=useState(null);
-  const [expWeeks,setExpWeeks]=useState({});
-  const [importText,setImportText]=useState("");
-  const tRef=useRef();
-  const saveSkip=useRef({d:0,c:0,cp:0});
-
-  useEffect(()=>{(async()=>{
+  const [screen, setScreen] = useState("loading");
+  const [program, setProgram] = useState(null);
+  const [data, setData] = useState({});
+  const [config, setConfig] = useState({ startDate: defaultStart() });
+  const [completed, setCompleted] = useState({});
+  const [profile, setProfile] = useState({});
+  const [view, setView] = useState("train");
+  const [selDate, setSelDate] = useState(getToday());
+  const [selDay, setSelDay] = useState(0);
+  const [showForm, setShowForm] = useState({});
+  const [toast, setToast] = useState(null);
+  const [expWeeks, setExpWeeks] = useState({});
+  const [importText, setImportText] = useState("");
+  const [timerEnd, setTimerEnd] = useState(null);
+  const [timerOpen, setTimerOpen] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const tRef = useRef();
+  const saveSkip = useRef({ d: 0, c: 0, cp: 0 });
+ 
+  useEffect(() => { (async () => {
     try {
-      const p=await dbGet("program"); const d=await dbGet("data"); const cfg=await dbGet("config"); const cp=await dbGet("completed"); const pr=await dbGet("profile");
-      if(p)setProgram(p); if(d)setData(d); if(cfg)setConfig(cfg); if(cp)setCompleted(cp); if(pr)setProfile(pr);
-      setScreen(p?"main":"landing");
-    } catch(e) { console.error(e); setScreen("landing"); }
-  })();},[]);
-
-  useEffect(()=>{if(screen==="main"){if(saveSkip.current.d++>0)dbSet("data",data).catch(()=>{});}},[data]);
-  useEffect(()=>{if(screen==="main"){if(saveSkip.current.c++>0)dbSet("config",config).catch(()=>{});}},[config]);
-  useEffect(()=>{if(screen==="main"){if(saveSkip.current.cp++>0)dbSet("completed",completed).catch(()=>{});}},[completed]);
-
-  const flash=(m)=>{setToast(m);clearTimeout(tRef.current);tRef.current=setTimeout(()=>setToast(null),2200);};
-
+      const p = await dbGet("program"); const d = await dbGet("data"); const cfg = await dbGet("config"); const cp = await dbGet("completed"); const pr = await dbGet("profile");
+      if (d) setData(d); if (cfg) setConfig(cfg); if (cp) setCompleted(cp); if (pr) setProfile(pr);
+      if (p && p.rev === 2) { setProgram(p); setScreen("main"); }
+      else setScreen("landing");
+    } catch (e) { console.error(e); setScreen("landing"); }
+  })(); }, []);
+ 
+  useEffect(() => { if (screen === "main") { if (saveSkip.current.d++ > 0) dbSet("data", data).catch(() => {}); } }, [data]);
+  useEffect(() => { if (screen === "main") { if (saveSkip.current.c++ > 0) dbSet("config", config).catch(() => {}); } }, [config]);
+  useEffect(() => { if (screen === "main") { if (saveSkip.current.cp++ > 0) dbSet("completed", completed).catch(() => {}); } }, [completed]);
+ 
+  // Rest timer tick
+  useEffect(() => {
+    if (!timerEnd) return;
+    const iv = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(iv);
+  }, [timerEnd]);
+  const timerLeft = timerEnd ? Math.max(0, Math.ceil((timerEnd - now) / 1000)) : 0;
+  const timerDone = timerEnd && timerLeft === 0;
+  const startTimer = (secs) => { setTimerEnd(Date.now() + secs * 1000); setTimerOpen(false); };
+ 
+  const flash = (m) => { setToast(m); clearTimeout(tRef.current); tRef.current = setTimeout(() => setToast(null), 2200); };
+ 
   const selectPreset = async () => {
-    const prog = {};
-    Object.entries(BRIANS_WORKOUT.days).forEach(([day,exs])=>{ prog[day]=exs.map(normEx); });
-    const p = {name:BRIANS_WORKOUT.name, desc:BRIANS_WORKOUT.desc, days:prog};
-    setProgram(p); setProfile(BRIANS_WORKOUT.profile);
-    await dbSet("program",p); await dbSet("profile",BRIANS_WORKOUT.profile);
-    setScreen("main"); flash("Brian's Workout loaded!");
+    setProgram(BRIANS_WORKOUT); setProfile(BRIANS_WORKOUT.profile);
+    await dbSet("program", BRIANS_WORKOUT); await dbSet("profile", BRIANS_WORKOUT.profile);
+    if (!(await dbGet("config"))) { const c = { startDate: defaultStart() }; setConfig(c); await dbSet("config", c); }
+    setScreen("main"); flash("Brian's Workout v2 loaded!");
   };
-
+ 
   const daysOrder = program ? Object.keys(program.days) : [];
-  const dayKey = daysOrder.length ? selDate+"::"+daysOrder[selDay] : "";
-  const dayData = data[dayKey]||{};
-  const exercises = program ? (program.days[daysOrder[selDay]]||[]) : [];
-  const wn = weeksSinceStart(config.startDate,selDate);
+  const dayKey = daysOrder.length ? selDate + "::" + daysOrder[selDay] : "";
+  const dayData = data[dayKey] || {};
+  const exercises = program ? (program.days[daysOrder[selDay]] || []) : [];
+  const wn = weeksSinceStart(config.startDate, selDate);
   const phase = getPhase(wn);
   const cw = getCycleWeek(wn);
   const locked = !!completed[dayKey];
-
-  const tSets = Object.values(dayData).reduce((a,s)=>a+(s?s.filter(x=>x.reps).length:0),0);
-  const tReps = Object.values(dayData).reduce((a,s)=>a+(s?s.reduce((b,x)=>b+(parseInt(x.reps)||0),0):0),0);
-
-  const upd=(ex,si,field,val)=>{if(locked)return;setData(p=>{const dd={...(p[dayKey]||{})};const s=[...(dd[ex]||[])];while(s.length<=si)s.push({reps:"",weight:""});s[si]={...s[si],[field]:val};dd[ex]=s;return{...p,[dayKey]:dd};});};
-  const addS=(ex)=>{if(locked)return;setData(p=>{const dd={...(p[dayKey]||{})};const s=[...(dd[ex]||[])];let pf={reps:"",weight:""};if(s.length>0){const l=s[s.length-1];pf={reps:l.reps||"",weight:l.weight||""};}else{const pr=getPrv(ex);if(pr&&pr.length)pf={reps:pr[0].reps||"",weight:pr[0].weight||""};}s.push(pf);dd[ex]=s;return{...p,[dayKey]:dd};});};
-  const remS=(ex,si)=>{if(locked)return;setData(p=>{const dd={...(p[dayKey]||{})};const s=[...(dd[ex]||[])];s.splice(si,1);if(!s.length)delete dd[ex];else dd[ex]=s;return{...p,[dayKey]:dd};});};
-  const getPrv=(ex)=>{if(!daysOrder[selDay])return null;const e=Object.entries(data).filter(([k])=>k.endsWith(daysOrder[selDay])&&k!==dayKey).sort(([a],[b])=>b.localeCompare(a));for(const[,dd]of e){if(dd[ex]&&dd[ex].length)return dd[ex];}return null;};
-  const shiftD=(n)=>{const d=new Date(selDate+"T12:00:00");d.setDate(d.getDate()+n);setSelDate(d.toISOString().split("T")[0]);};
-
-  const complete=async()=>{if(tSets===0){flash("Log at least one set");return;}const nc={...completed,[dayKey]:{at:new Date().toISOString(),sets:tSets,reps:tReps}};setCompleted(nc);await dbSet("completed",nc);await dbSet("data",data);flash("Workout complete!");};
-  const unlock=()=>{if(confirm("Unlock for editing?")){setCompleted(p=>{const n={...p};delete n[dayKey];return n;});flash("Unlocked");}};
-
-  const exportD=()=>{const p=JSON.stringify({data,config,completed,program,profile,v:"v6",at:new Date().toISOString()});if(navigator.clipboard?.writeText)navigator.clipboard.writeText(p).then(()=>flash("Copied!")).catch(()=>flash("Copy failed"));};
-  const importD=(raw)=>{try{const p=JSON.parse(raw.trim());if(p.data)setData(p.data);if(p.config)setConfig(p.config);if(p.completed)setCompleted(p.completed);if(p.program){setProgram(p.program);dbSet("program",p.program);}if(p.profile){setProfile(p.profile);dbSet("profile",p.profile);}setImportText("");flash("Imported!");if(!program&&p.program)setScreen("main");}catch{flash("Import failed");}};
-
-  const allKeys=Object.keys(data).filter(k=>{const dd=data[k];return dd&&Object.values(dd).some(s=>s&&s.length&&s.some(x=>x.reps));}).sort((a,b)=>b.localeCompare(a));
-  const wkMap={};allKeys.forEach(k=>{const d=k.split("::")[0];const wk=getWeekKey(d);if(!wkMap[wk])wkMap[wk]={entries:[],tS:0,tR:0,days:new Set()};wkMap[wk].entries.push(k);wkMap[wk].days.add(d);Object.values(data[k]).forEach(sets=>{if(sets)sets.forEach(s=>{if(s.reps){wkMap[wk].tS++;wkMap[wk].tR+=parseInt(s.reps)||0;}});});});
-  const sWeeks=Object.keys(wkMap).sort((a,b)=>b.localeCompare(a));
-
-  const C={bg:"#171a1f",card:"#1e2228",brd:"#2d333b",acc:"#d4a04a",accD:"rgba(212,160,74,0.14)",txt:"#ecede8",mut:"#8b8880",inp:"#252a31"};
-
-  // ═══ LOADING
-  if(screen==="loading") return <div style={{display:"flex",justifyContent:"center",alignItems:"center",height:"100vh",background:C.bg}}><div style={{width:28,height:28,borderRadius:"50%",border:"3px solid "+C.brd,borderTopColor:C.acc,animation:"spin .8s linear infinite"}}/><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
-
-  // ═══ LANDING
-  if(screen==="landing") return (
-    <div style={{background:C.bg,minHeight:"100vh",padding:"36px 20px",fontFamily:"'Outfit',sans-serif",color:C.txt,maxWidth:540,margin:"0 auto"}}>
-      {toast&&<div style={T.toast}>{toast}</div>}
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-        <span style={{color:C.acc,fontSize:28,fontWeight:900}}>◈</span>
-        <span style={{fontFamily:"monospace",fontSize:22,fontWeight:700,letterSpacing:5,color:C.acc}}>IRON LOG</span>
+ 
+  const tSets = Object.values(dayData).reduce((a, s) => a + (s ? s.filter(x => x.reps).length : 0), 0);
+  const tReps = Object.values(dayData).reduce((a, s) => a + (s ? s.reduce((b, x) => b + (parseInt(x.reps) || 0), 0) : 0), 0);
+ 
+  // Previous session lookup — searches ALL days so history survives program changes
+  const getPrev = (ex) => {
+    const entries = Object.entries(data).filter(([k]) => k !== dayKey).sort(([a], [b]) => b.localeCompare(a));
+    for (const [, dd] of entries) { if (dd[ex] && dd[ex].length && dd[ex].some(s => s.reps)) return dd[ex]; }
+    return null;
+  };
+  const prevBest = (sets) => {
+    let best = null;
+    (sets || []).forEach(s => {
+      const w = parseFloat(s.weight) || 0, r = parseInt(s.reps) || 0;
+      if (r > 0 && (!best || w > best.w || (w === best.w && r > best.r))) best = { w, r };
+    });
+    return best;
+  };
+ 
+  const updateSet = (ex, si, field, val) => { if (locked) return; setData(p => { const dd = { ...(p[dayKey] || {}) }; const s = [...(dd[ex] || [])]; while (s.length <= si) s.push({ reps: "", weight: "" }); s[si] = { ...s[si], [field]: val }; dd[ex] = s; return { ...p, [dayKey]: dd }; }); };
+  const addSet = (ex) => {
+    if (locked) return;
+    setData(p => {
+      const dd = { ...(p[dayKey] || {}) }; const s = [...(dd[ex] || [])];
+      let pf = { reps: "", weight: "" };
+      if (s.length > 0) { const l = s[s.length - 1]; pf = { reps: l.reps || "", weight: l.weight || "" }; }
+      else { const pr = getPrev(ex); if (pr && pr.length) pf = { reps: pr[0].reps || "", weight: pr[0].weight || "" }; }
+      s.push(pf); dd[ex] = s; return { ...p, [dayKey]: dd };
+    });
+  };
+  const removeSet = (ex, si) => { if (locked) return; setData(p => { const dd = { ...(p[dayKey] || {}) }; const s = [...(dd[ex] || [])]; s.splice(si, 1); if (!s.length) delete dd[ex]; else dd[ex] = s; return { ...p, [dayKey]: dd }; }); };
+  const shiftDate = (n) => { const d = new Date(selDate + "T12:00:00"); d.setDate(d.getDate() + n); setSelDate(d.toISOString().split("T")[0]); };
+ 
+  const completeWorkout = async () => {
+    if (tSets === 0) { flash("Log at least one set"); return; }
+    const nc = { ...completed, [dayKey]: { at: new Date().toISOString(), sets: tSets, reps: tReps } };
+    setCompleted(nc);
+    await dbSet("completed", nc); await dbSet("data", data);
+    flash("Workout complete!");
+  };
+  const unlockWorkout = () => { if (confirm("Unlock for editing?")) { setCompleted(p => { const n = { ...p }; delete n[dayKey]; return n; }); flash("Unlocked"); } };
+ 
+  const exportData = () => {
+    const p = JSON.stringify({ data, config, completed, program, profile, v: "v7", at: new Date().toISOString() });
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(p).then(() => flash("Copied!")).catch(() => flash("Copy failed"));
+  };
+  const importData = (raw) => {
+    try {
+      const p = JSON.parse(raw.trim());
+      if (p.data) setData(p.data); if (p.config) setConfig(p.config); if (p.completed) setCompleted(p.completed);
+      if (p.program) { setProgram(p.program); dbSet("program", p.program); }
+      if (p.profile) { setProfile(p.profile); dbSet("profile", p.profile); }
+      setImportText(""); flash("Imported!");
+      if (p.program && p.program.rev === 2) setScreen("main");
+    } catch { flash("Import failed"); }
+  };
+ 
+  const allKeys = Object.keys(data).filter(k => { const dd = data[k]; return dd && Object.values(dd).some(s => s && s.length && s.some(x => x.reps)); }).sort((a, b) => b.localeCompare(a));
+  const weekMap = {};
+  allKeys.forEach(k => {
+    const d = k.split("::")[0]; const wk = getWeekKey(d);
+    if (!weekMap[wk]) weekMap[wk] = { entries: [], tS: 0, tR: 0, days: new Set() };
+    weekMap[wk].entries.push(k); weekMap[wk].days.add(d);
+    Object.values(data[k]).forEach(ss => { if (ss) ss.forEach(s => { if (s.reps) { weekMap[wk].tS++; weekMap[wk].tR += parseInt(s.reps) || 0; } }); });
+  });
+  const sortedWeeks = Object.keys(weekMap).sort((a, b) => b.localeCompare(a));
+ 
+  const C = { bg: "#171a1f", cd: "#1e2228", bd: "#2d333b", ac: "#d4a04a", aD: "rgba(212,160,74,0.14)", tx: "#ecede8", mt: "#8b8880", ip: "#252a31", gr: "#5ec98e", rd: "#e86060" };
+  const T = {
+    toast: { position: "fixed", top: "calc(16px + env(safe-area-inset-top,0px))", left: "50%", transform: "translateX(-50%)", background: C.ac, color: "#111", padding: "8px 24px", borderRadius: 8, fontWeight: 700, fontSize: 13, zIndex: 999 },
+    inp: { background: C.ip, border: "1px solid " + C.bd, borderRadius: 6, color: C.tx, padding: "7px 8px", fontSize: 14, fontWeight: 600, width: 64, textAlign: "center", outline: "none", fontFamily: "monospace" },
+    arr: { background: C.cd, border: "1px solid " + C.bd, color: C.tx, width: 36, height: 36, borderRadius: 8, fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
+    pill: { background: C.aD, color: C.ac, padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 700, fontFamily: "monospace" },
+    card: { background: C.cd, borderRadius: 10, border: "1px solid " + C.bd, padding: 16, marginBottom: 12 },
+    sec: { fontFamily: "monospace", fontSize: 12, fontWeight: 700, letterSpacing: 2.5, color: C.ac, marginBottom: 14, textTransform: "uppercase" },
+    exp: { width: "100%", padding: 12, background: C.aD, color: C.ac, border: "1px solid " + C.ac, borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" },
+  };
+ 
+  if (screen === "loading") return (
+    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", background: C.bg }}>
+      <div style={{ width: 28, height: 28, borderRadius: "50%", border: "3px solid " + C.bd, borderTopColor: C.ac, animation: "spin .8s linear infinite" }} />
+    </div>
+  );
+ 
+  // ═══ LANDING ═══
+  if (screen === "landing") return (
+    <div style={{ background: C.bg, minHeight: "100vh", padding: "calc(36px + env(safe-area-inset-top,0px)) 20px 36px", maxWidth: 540, margin: "0 auto", color: C.tx }}>
+      {toast && <div style={T.toast}>{toast}</div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <span style={{ color: C.ac, fontSize: 28, fontWeight: 900 }}>◈</span>
+        <span style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 700, letterSpacing: 5, color: C.ac }}>IRON LOG</span>
       </div>
-      <h1 style={{fontSize:34,fontWeight:900,lineHeight:1.15,margin:"24px 0 12px"}}>Your gym.<br/>Your <em style={{fontStyle:"italic",color:C.acc}}>plan</em>.<br/>Your rules.</h1>
-      <p style={{fontSize:14,color:C.mut,lineHeight:1.6,marginBottom:28}}>Choose a pre-built program or import your existing data.</p>
-
-      <div onClick={selectPreset} style={{background:C.card,border:"1px solid "+C.brd,borderRadius:14,padding:20,marginBottom:12,cursor:"pointer",position:"relative"}}>
-        <span style={{position:"absolute",top:12,right:12,fontSize:9,fontWeight:700,padding:"3px 10px",borderRadius:4,letterSpacing:1,background:C.accD,color:C.acc,fontFamily:"monospace"}}>PRESET</span>
-        <h3 style={{fontSize:16,fontWeight:800,color:C.acc,marginBottom:6}}>◈ Brian's Workout</h3>
-        <p style={{fontSize:12,color:C.mut,lineHeight:1.5}}>6-day leg-biased PPL. Legs 3x/week, upper body 2x/week. Auto-periodized with core & mobility every session. L4/L5 disc-safe.</p>
+      <h1 style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.15, margin: "24px 0 12px" }}>Stronger.<br />Straighter.<br /><em style={{ fontStyle: "italic", color: C.ac }}>Built to last.</em></h1>
+      <p style={{ fontSize: 14, color: C.mt, lineHeight: 1.6, marginBottom: 28 }}>5-day strength program with daily corrective work. Choose the preset or restore from a backup.</p>
+      <div onClick={selectPreset} style={{ background: C.cd, border: "1px solid " + C.bd, borderRadius: 14, padding: 20, marginBottom: 12, cursor: "pointer", position: "relative" }}>
+        <span style={{ position: "absolute", top: 12, right: 12, fontSize: 9, fontWeight: 700, padding: "3px 10px", borderRadius: 4, letterSpacing: 1, background: C.aD, color: C.ac, fontFamily: "monospace" }}>v2 PRESET</span>
+        <h3 style={{ fontSize: 16, fontWeight: 800, color: C.ac, marginBottom: 6 }}>◈ Brian's Workout</h3>
+        <p style={{ fontSize: 12, color: C.mt, lineHeight: 1.5 }}>5-day strength split. Compounds 6-8. Daily APT + rib flare corrective primer. IT band prep every leg day. Rehab block Day 5. L4/L5 disc-safe. Your existing history carries over.</p>
       </div>
-
-      <div style={{background:C.card,border:"1px dashed "+C.brd,borderRadius:14,padding:20}}>
-        <h3 style={{fontSize:16,fontWeight:800,color:C.mut,marginBottom:6}}>↑ Import Existing Data</h3>
-        <p style={{fontSize:12,color:C.mut,lineHeight:1.5,marginBottom:8}}>Paste previously exported data to restore.</p>
-        <textarea value={importText} onChange={e=>setImportText(e.target.value)} placeholder="Paste export data..." style={{width:"100%",minHeight:70,background:C.inp,border:"1px solid "+C.brd,borderRadius:8,color:C.txt,padding:10,fontSize:11,fontFamily:"monospace",resize:"vertical"}}/>
-        {importText.trim()&&<button onClick={()=>importD(importText)} style={{width:"100%",padding:12,marginTop:8,background:C.accD,color:C.acc,border:"1px solid "+C.acc,borderRadius:8,fontWeight:700,fontSize:13}}>Import</button>}
+      <div style={{ background: C.cd, border: "1px dashed " + C.bd, borderRadius: 14, padding: 20 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 800, color: C.mt, marginBottom: 6 }}>↑ Import Backup</h3>
+        <textarea value={importText} onChange={e => setImportText(e.target.value)} placeholder="Paste export data..." style={{ width: "100%", minHeight: 70, background: C.ip, border: "1px solid " + C.bd, borderRadius: 8, color: C.tx, padding: 10, fontSize: 11, resize: "vertical", marginTop: 8 }} />
+        {importText.trim() && <button onClick={() => importData(importText)} style={{ ...T.exp, marginTop: 8 }}>Import</button>}
       </div>
     </div>
   );
-
-  if(!program) return null;
-
-  // ═══ MAIN
+ 
+  if (!program) return null;
+ 
+  // ═══ MAIN ═══
   return (
-    <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Outfit',sans-serif",color:C.txt,maxWidth:540,margin:"0 auto",paddingBottom:70}}>
-      <style>{"@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}"}</style>
-      {toast&&<div style={T.toast}>{toast}</div>}
-
+    <div style={{ background: C.bg, minHeight: "100vh", maxWidth: 540, margin: "0 auto", paddingTop: "env(safe-area-inset-top,0px)", paddingBottom: "calc(80px + env(safe-area-inset-bottom,0px))", color: C.tx }}>
+      {toast && <div style={T.toast}>{toast}</div>}
+ 
       {/* Header */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 16px 10px",borderBottom:"1px solid "+C.brd}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{color:C.acc,fontSize:20}}>◈</span>
-          <span style={{fontFamily:"monospace",fontSize:15,fontWeight:700,letterSpacing:4,color:C.acc}}>IRON LOG</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 16px 10px", borderBottom: "1px solid " + C.bd }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: C.ac, fontSize: 20 }}>◈</span>
+          <span style={{ fontFamily: "monospace", fontSize: 15, fontWeight: 700, letterSpacing: 4, color: C.ac }}>IRON LOG</span>
         </div>
-        <div style={{display:"flex",gap:6}}>
-          {[profile.height,profile.weight,profile.age].filter(Boolean).map((v,i)=><span key={i} style={{background:C.accD,color:C.acc,padding:"3px 10px",borderRadius:5,fontSize:11,fontWeight:700}}>{v}</span>)}
+        <div style={{ display: "flex", gap: 6 }}>
+          {[profile.height, profile.weight, profile.age].filter(Boolean).map((v, i) => <span key={i} style={{ background: C.aD, color: C.ac, padding: "3px 10px", borderRadius: 5, fontSize: 11, fontWeight: 700 }}>{v}</span>)}
         </div>
       </div>
-
-      {/* Phase */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",background:phase.color+"15",borderBottom:"2px solid "+phase.color}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:20,fontWeight:900,color:phase.color}}>{phase.icon}</span>
-          <div><div style={{fontSize:14,fontWeight:800,letterSpacing:1,color:phase.color}}>{phase.name} Phase</div><div style={{fontSize:10,color:C.mut}}>{phase.desc}</div></div>
+ 
+      {/* Phase banner */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: phase.color + "15", borderBottom: "2px solid " + phase.color }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 18, fontWeight: 900, color: phase.color, fontFamily: "monospace", border: "2px solid " + phase.color, borderRadius: 6, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>{phase.icon}</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 1, color: phase.color }}>{phase.name} Phase</div>
+            <div style={{ fontSize: 10, color: C.mt }}>{phase.desc}</div>
+          </div>
         </div>
-        <div style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:900,fontFamily:"monospace",color:phase.color}}>W{cw}</div><div style={{fontSize:9,color:C.mut}}>of 10</div></div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 22, fontWeight: 900, fontFamily: "monospace", color: phase.color }}>W{cw}</div>
+          <div style={{ fontSize: 9, color: C.mt }}>of 10</div>
+        </div>
       </div>
-
+ 
       {/* Nav */}
-      <div style={{display:"flex",background:C.card,borderBottom:"1px solid "+C.brd}}>
-        {[["train","TRAIN"],["history","HISTORY"],["weekly","WEEKLY"],["program","PROGRAM"],["config","⚙"]].map(([id,lbl])=>
-          <button key={id} onClick={()=>setView(id)} style={{flex:1,padding:"12px 0",background:"none",border:"none",borderBottom:view===id?"2px solid "+C.acc:"2px solid transparent",color:view===id?C.acc:C.mut,fontWeight:700,fontSize:10,letterSpacing:1.5,fontFamily:"monospace",cursor:"pointer"}}>{lbl}</button>
+      <div style={{ display: "flex", background: C.cd, borderBottom: "1px solid " + C.bd }}>
+        {[["train", "TRAIN"], ["history", "HISTORY"], ["weekly", "WEEKLY"], ["program", "PROGRAM"], ["config", "⚙"]].map(([id, lbl]) =>
+          <button key={id} onClick={() => setView(id)} style={{ flex: 1, padding: "12px 0", background: "none", border: "none", borderBottom: view === id ? "2px solid " + C.ac : "2px solid transparent", color: view === id ? C.ac : C.mt, fontWeight: 700, fontSize: 10, letterSpacing: 1.5, fontFamily: "monospace", cursor: "pointer" }}>{lbl}</button>
         )}
       </div>
-
-      {/* ═══ TRAIN */}
-      {view==="train"&&<div style={{padding:"16px 14px"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-          <button onClick={()=>shiftD(-1)} style={T.dateArr}>‹</button>
-          <div style={{textAlign:"center"}}><input type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} style={{background:"none",border:"none",color:C.acc,fontSize:14,fontWeight:700,textAlign:"center",width:140,fontFamily:"monospace"}}/><div style={{fontSize:11,color:C.mut,marginTop:2}}>{fmtDate(selDate)}</div></div>
-          <button onClick={()=>shiftD(1)} style={T.dateArr}>›</button>
+ 
+      {/* ═══ TRAIN ═══ */}
+      {view === "train" && <div style={{ padding: "16px 14px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <button onClick={() => shiftDate(-1)} style={T.arr}>‹</button>
+          <div style={{ textAlign: "center" }}>
+            <input type="date" value={selDate} onChange={e => setSelDate(e.target.value)} style={{ background: "none", border: "none", color: C.ac, fontSize: 14, fontWeight: 700, textAlign: "center", width: 140, fontFamily: "monospace" }} />
+            <div style={{ fontSize: 11, color: C.mt, marginTop: 2 }}>{fmtDate(selDate)}</div>
+          </div>
+          <button onClick={() => shiftDate(1)} style={T.arr}>›</button>
         </div>
-        <div style={{display:"flex",justifyContent:"center",gap:28,padding:"8px 0 14px"}}>
-          <div style={{textAlign:"center"}}><div style={{fontSize:30,fontWeight:900,color:C.acc,fontFamily:"monospace"}}>{tSets}</div><div style={{fontSize:9,color:C.mut,letterSpacing:2,fontWeight:700}}>SETS</div></div>
-          <div style={{width:1,height:30,background:C.brd,alignSelf:"center"}}/>
-          <div style={{textAlign:"center"}}><div style={{fontSize:30,fontWeight:900,color:C.acc,fontFamily:"monospace"}}>{tReps}</div><div style={{fontSize:9,color:C.mut,letterSpacing:2,fontWeight:700}}>REPS</div></div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 28, padding: "8px 0 14px" }}>
+          <div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 900, color: C.ac, fontFamily: "monospace" }}>{tSets}</div><div style={{ fontSize: 9, color: C.mt, letterSpacing: 2, fontWeight: 700 }}>SETS</div></div>
+          <div style={{ width: 1, height: 30, background: C.bd, alignSelf: "center" }} />
+          <div style={{ textAlign: "center" }}><div style={{ fontSize: 30, fontWeight: 900, color: C.ac, fontFamily: "monospace" }}>{tReps}</div><div style={{ fontSize: 9, color: C.mt, letterSpacing: 2, fontWeight: 700 }}>REPS</div></div>
         </div>
-        <div style={{display:"flex",gap:4,marginBottom:12,overflowX:"auto",paddingBottom:4}}>
-          {daysOrder.map((d,i)=>{const sh=d.replace(/Day \d+ — /,"").split("(")[0].split(":")[0].trim();
-            return <button key={d} onClick={()=>setSelDay(i)} style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"8px 6px",borderRadius:8,border:"1px solid "+(selDay===i?C.acc:C.brd),background:selDay===i?C.accD:C.card,minWidth:52,gap:2,flexShrink:0,cursor:"pointer"}}>
-              <span style={{fontSize:11,fontWeight:800,color:C.acc,fontFamily:"monospace"}}>D{i+1}</span>
-              <span style={{fontSize:7,color:C.mut,fontWeight:600,textAlign:"center",lineHeight:1.2}}>{sh}</span>
+        <div style={{ display: "flex", gap: 4, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+          {daysOrder.map((d, i) => {
+            const sh = d.replace(/Day \d+ — /, "").split("(")[0].split(":")[0].trim();
+            return <button key={d} onClick={() => setSelDay(i)} style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 6px", borderRadius: 8, border: "1px solid " + (selDay === i ? C.ac : C.bd), background: selDay === i ? C.aD : C.cd, minWidth: 56, gap: 2, flexShrink: 0, cursor: "pointer" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: C.ac, fontFamily: "monospace" }}>D{i + 1}</span>
+              <span style={{ fontSize: 7, color: C.mt, fontWeight: 600, textAlign: "center", lineHeight: 1.2 }}>{sh}</span>
             </button>;
           })}
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-          <div style={{fontSize:11,fontWeight:800,color:C.acc,letterSpacing:1.5,textTransform:"uppercase",fontFamily:"monospace"}}>{daysOrder[selDay]}</div>
-          {locked&&<span style={{fontSize:9,fontWeight:700,color:"#5ec98e",background:"rgba(94,201,142,0.15)",padding:"3px 8px",borderRadius:4,fontFamily:"monospace"}}>✓ LOCKED</span>}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.ac, letterSpacing: 1.5, textTransform: "uppercase", fontFamily: "monospace" }}>{daysOrder[selDay]}</div>
+          {locked && <span style={{ fontSize: 9, fontWeight: 700, color: C.gr, background: "rgba(94,201,142,0.15)", padding: "3px 8px", borderRadius: 4, fontFamily: "monospace" }}>✓ LOCKED</span>}
         </div>
-        {exercises.map((ex,ei)=>{
-          if(ex.cat==="divider")return <div key={ex.name+ei} style={{display:"flex",alignItems:"center",gap:10,margin:"6px 0 2px"}}><div style={{flex:1,height:1,background:C.brd}}/><span style={{fontSize:8,fontWeight:800,letterSpacing:2,color:C.mut,fontFamily:"monospace",whiteSpace:"nowrap"}}>{ex.name.replace(/—/g,"").trim()}</span><div style={{flex:1,height:1,background:C.brd}}/></div>;
-          const rx=phaseRx(ex.sets,ex.reps,ex.cat,phase);const sets=dayData[ex.name]||[];const prev=getPrv(ex.name);const fk=selDay+"-"+ex.name;const fo=showForm[fk];const cc=CAT_COLORS[ex.cat]||CAT_COLORS.main;
-          return <div key={ex.name} style={{background:C.card,borderRadius:10,border:"1px solid "+C.brd,borderLeft:"3px solid "+cc,padding:"12px 14px",marginBottom:8,animation:"fadeIn .25s ease both",animationDelay:ei*0.03+"s"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4,flexWrap:"wrap",gap:6}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontFamily:"monospace",fontSize:10,fontWeight:700,width:20,height:20,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",background:cc+"22",color:cc}}>{ei+1}</span>
-                <div><span style={{fontWeight:700,fontSize:13}}>{ex.name}</span>{ex.cat!=="main"&&<span style={{display:"inline-block",fontSize:9,fontWeight:700,padding:"1px 7px",borderRadius:4,marginLeft:6,background:cc+"22",color:cc,letterSpacing:.5,textTransform:"uppercase",verticalAlign:"middle"}}>{ex.cat}</span>}</div>
+        {exercises.map((ex, ei) => {
+          if (ex.cat === "divider") return <div key={ex.name + ei} style={{ display: "flex", alignItems: "center", gap: 10, margin: "6px 0 2px" }}>
+            <div style={{ flex: 1, height: 1, background: C.bd }} />
+            <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: 2, color: C.mt, fontFamily: "monospace", whiteSpace: "nowrap" }}>{ex.name.replace(/—/g, "").trim()}</span>
+            <div style={{ flex: 1, height: 1, background: C.bd }} />
+          </div>;
+          const rx = phaseRx(ex.sets, ex.reps, ex.cat, phase);
+          const sets = dayData[ex.name] || [];
+          const prev = getPrev(ex.name);
+          const best = ex.cat === "main" ? prevBest(prev) : null;
+          const top = topOfRange(rx.reps);
+          const hitTop = ex.cat === "main" && prev && top > 0 && prev.filter(s => s.reps).length > 0 && prev.filter(s => s.reps).every(s => (parseInt(s.reps) || 0) >= top);
+          const fk = selDay + "-" + ex.name;
+          const fo = showForm[fk];
+          const cc = CAT_COLORS[ex.cat] || CAT_COLORS.main;
+          return <div key={ex.name} style={{ background: C.cd, borderRadius: 10, border: "1px solid " + C.bd, borderLeft: "3px solid " + cc, padding: "12px 14px", marginBottom: 8, animation: "fadeIn .25s ease both" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4, flexWrap: "wrap", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontFamily: "monospace", fontSize: 10, fontWeight: 700, width: 20, height: 20, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", background: cc + "22", color: cc, flexShrink: 0 }}>{ei + 1}</span>
+                <div>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>{ex.name}</span>
+                  {ex.cat !== "main" && <span style={{ display: "inline-block", fontSize: 9, fontWeight: 700, padding: "1px 7px", borderRadius: 4, marginLeft: 6, background: cc + "22", color: cc, letterSpacing: .5, textTransform: "uppercase", verticalAlign: "middle" }}>{ex.cat}</span>}
+                </div>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:11,fontFamily:"monospace",fontWeight:700,color:phase.color}}>{rx.sets}×{rx.reps}</span>
-                {ex.form&&<button onClick={()=>setShowForm(p=>({...p,[fk]:!p[fk]}))} style={{background:"none",border:"none",color:C.mut,fontSize:11,fontWeight:600,cursor:"pointer"}}>{fo?"▾ Form":"▸ Form"}</button>}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, fontFamily: "monospace", fontWeight: 700, color: phase.color }}>{rx.sets}×{rx.reps}</span>
+                {ex.form && <button onClick={() => setShowForm(p => ({ ...p, [fk]: !p[fk] }))} style={{ background: "none", border: "none", color: C.mt, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{fo ? "▾ Form" : "▸ Form"}</button>}
               </div>
             </div>
-            {fo&&<div style={{fontSize:12,color:"#a8a39e",lineHeight:1.5,padding:"8px 10px",background:"rgba(212,160,74,0.07)",borderRadius:6,marginBottom:8,borderLeft:"3px solid "+cc}}>{ex.form}</div>}
-            {prev&&<div style={{fontSize:11,color:C.mut,marginBottom:6,fontStyle:"italic"}}>↩ Last: {prev.map(s=>(s.reps||"–")+"×"+(s.weight||"–")).join(", ")}</div>}
-            {sets.map((s,si)=><div key={si} style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-              <span style={{fontFamily:"monospace",fontSize:11,fontWeight:700,width:24,textAlign:"center",color:cc}}>S{si+1}</span>
-              <input type="number" placeholder="Reps" value={s.reps} min="0" onChange={e=>upd(ex.name,si,"reps",e.target.value)} disabled={locked} style={{...T.inp,...(locked?{opacity:.5}:{})}}/>
-              <span style={{color:C.mut,fontWeight:700,fontSize:13}}>×</span>
-              <input type="number" placeholder="lbs" value={s.weight} min="0" onChange={e=>upd(ex.name,si,"weight",e.target.value)} disabled={locked} style={{...T.inp,...(locked?{opacity:.5}:{})}}/>
-              {!locked&&<button onClick={()=>remS(ex.name,si)} style={{background:"none",border:"none",color:C.mut,fontSize:12,padding:"2px 6px",cursor:"pointer"}}>✕</button>}
+            {fo && <div style={{ fontSize: 12, color: "#a8a39e", lineHeight: 1.5, padding: "8px 10px", background: "rgba(212,160,74,0.07)", borderRadius: 6, marginBottom: 8, borderLeft: "3px solid " + cc }}>{ex.form}</div>}
+            {prev && <div style={{ fontSize: 11, color: C.mt, marginBottom: 2, fontStyle: "italic" }}>↩ Last: {prev.map(s => (s.reps || "–") + "×" + (s.weight || "–")).join(", ")}</div>}
+            {hitTop && <div style={{ fontSize: 11, color: C.gr, marginBottom: 6, fontWeight: 700 }}>↑ Hit top of range last time — add weight today</div>}
+            {sets.map((s, si) => {
+              const w = parseFloat(s.weight) || 0, r = parseInt(s.reps) || 0;
+              const isPR = best && r > 0 && w > 0 && (w > best.w || (w === best.w && r > best.r));
+              return <div key={si} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, width: 24, textAlign: "center", color: cc }}>S{si + 1}</span>
+                <input type="number" placeholder="Reps" value={s.reps} min="0" onChange={e => updateSet(ex.name, si, "reps", e.target.value)} disabled={locked} style={{ ...T.inp, ...(locked ? { opacity: .5 } : {}) }} />
+                <span style={{ color: C.mt, fontWeight: 700, fontSize: 13 }}>×</span>
+                <input type="number" placeholder="lbs" value={s.weight} min="0" onChange={e => updateSet(ex.name, si, "weight", e.target.value)} disabled={locked} style={{ ...T.inp, ...(locked ? { opacity: .5 } : {}) }} />
+                {isPR && <span style={{ fontSize: 10, fontWeight: 800, color: C.gr, fontFamily: "monospace" }}>▲ PR</span>}
+                {!locked && <button onClick={() => removeSet(ex.name, si)} style={{ background: "none", border: "none", color: C.mt, fontSize: 12, padding: "2px 6px", cursor: "pointer", marginLeft: "auto" }}>✕</button>}
+              </div>;
+            })}
+            {!locked && <button onClick={() => addSet(ex.name)} style={{ border: "none", borderRadius: 6, padding: "6px 0", fontWeight: 700, fontSize: 11, width: "100%", marginTop: 6, color: cc, background: cc + "18", cursor: "pointer" }}>+ Add Set</button>}
+          </div>;
+        })}
+        {locked ? <div style={{ textAlign: "center", marginTop: 20, padding: 20, background: "rgba(94,201,142,0.1)", border: "2px solid " + C.gr, borderRadius: 10 }}>
+          <div style={{ fontSize: 32, color: C.gr }}>✓</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.gr, letterSpacing: 1, marginBottom: 4 }}>Workout Completed</div>
+          <div style={{ fontSize: 12, color: C.mt, marginBottom: 12, fontFamily: "monospace" }}>{(completed[dayKey] || {}).sets} sets · {(completed[dayKey] || {}).reps} reps</div>
+          <button onClick={unlockWorkout} style={{ background: "none", border: "1px solid " + C.bd, color: C.mt, borderRadius: 6, padding: "6px 16px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Unlock to Edit</button>
+        </div> : <button onClick={completeWorkout} style={{ width: "100%", padding: 16, marginTop: 20, background: C.gr, color: "#fff", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 800, letterSpacing: 1.5, textTransform: "uppercase", cursor: "pointer" }}>✓ Complete Workout</button>}
+      </div>}
+ 
+      {/* ═══ HISTORY ═══ */}
+      {view === "history" && <div style={{ padding: "16px 14px" }}>
+        <div style={T.sec}>Session History</div>
+        {!allKeys.length && <div style={{ color: C.mt, fontSize: 13, textAlign: "center", padding: 40 }}>No sessions yet.</div>}
+        {allKeys.map(k => {
+          const [date, ...rest] = k.split("::"); const dl = rest.join("::");
+          const dd = data[k]; const ents = Object.entries(dd).filter(([, s]) => s && s.length);
+          const ts = ents.reduce((a, [, s]) => a + s.filter(x => x.reps).length, 0);
+          const tr = ents.reduce((a, [, s]) => a + s.reduce((b, x) => b + (parseInt(x.reps) || 0), 0), 0);
+          const w = weeksSinceStart(config.startDate, date); const ph = getPhase(w);
+          return <div key={k} style={T.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+              <div><div style={{ fontWeight: 700, fontSize: 14 }}>{fmtDate(date)}</div><div style={{ fontSize: 11, color: C.mt }}>{dl.replace(/Day \d+ — /, "")}</div></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: ph.color + "22", color: ph.color }}>{ph.name}</span>
+                <span style={T.pill}>{ts}S</span><span style={T.pill}>{tr}R</span>
+              </div>
+            </div>
+            {ents.map(([ex, sets]) => <div key={ex} style={{ marginBottom: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>{ex}</span><br />
+              <span style={{ fontSize: 11, color: C.mt }}>{sets.map(s => (s.reps || "–") + "×" + (s.weight || "–")).join("  ·  ")}</span>
             </div>)}
-            {!locked&&<button onClick={()=>addS(ex.name)} style={{border:"none",borderRadius:6,padding:"6px 0",fontWeight:700,fontSize:11,width:"100%",marginTop:6,color:cc,background:cc+"18",cursor:"pointer"}}>+ Add Set</button>}
           </div>;
         })}
-        {locked?<div style={{textAlign:"center",marginTop:20,padding:20,background:"rgba(94,201,142,0.1)",border:"2px solid #5ec98e",borderRadius:10}}>
-          <div style={{fontSize:32,color:"#5ec98e"}}>✓</div><div style={{fontSize:16,fontWeight:800,color:"#5ec98e",letterSpacing:1,marginBottom:4}}>Workout Completed</div>
-          <div style={{fontSize:12,color:C.mut,marginBottom:12,fontFamily:"monospace"}}>{completed[dayKey]?.sets} sets · {completed[dayKey]?.reps} reps</div>
-          <button onClick={unlock} style={{background:"none",border:"1px solid "+C.brd,color:C.mut,borderRadius:6,padding:"6px 16px",fontSize:11,fontWeight:600,cursor:"pointer"}}>Unlock to Edit</button>
-        </div>:<button onClick={complete} style={{width:"100%",padding:16,marginTop:20,background:"#5ec98e",color:"#fff",border:"none",borderRadius:10,fontSize:15,fontWeight:800,letterSpacing:1.5,textTransform:"uppercase",cursor:"pointer"}}>✓ Complete Workout</button>}
       </div>}
-
-      {/* ═══ HISTORY */}
-      {view==="history"&&<div style={{padding:"16px 14px"}}>
-        <div style={T.secTitle}>Session History</div>
-        {!allKeys.length&&<div style={{color:C.mut,fontSize:13,textAlign:"center",padding:40}}>No sessions logged yet.</div>}
-        {allKeys.map(k=>{const[date,...rest]=k.split("::");const dl=rest.join("::");const dd=data[k];const ents=Object.entries(dd).filter(([,s])=>s&&s.length);const ts=ents.reduce((a,[,s])=>a+s.filter(x=>x.reps).length,0);const tr=ents.reduce((a,[,s])=>a+s.reduce((b,x)=>b+(parseInt(x.reps)||0),0),0);const w=weeksSinceStart(config.startDate,date);const ph=getPhase(w);
-          return <div key={k} style={{background:C.card,borderRadius:10,border:"1px solid "+C.brd,padding:"12px 14px",marginBottom:10}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:6}}>
-              <div><div style={{fontWeight:700,fontSize:14}}>{fmtDate(date)}</div><div style={{fontSize:11,color:C.mut}}>{dl.replace(/Day \d+ — /,"")}</div></div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{padding:"2px 8px",borderRadius:4,fontSize:10,fontWeight:700,background:ph.color+"22",color:ph.color}}>{ph.icon} {ph.name}</span>
-                <span style={{...T.pill}}>{ts}S</span><span style={{...T.pill}}>{tr}R</span>
+ 
+      {/* ═══ WEEKLY ═══ */}
+      {view === "weekly" && <div style={{ padding: "16px 14px" }}>
+        <div style={T.sec}>Week-over-Week</div>
+        {!sortedWeeks.length && <div style={{ color: C.mt, fontSize: 13, textAlign: "center", padding: 40 }}>No data yet.</div>}
+        {sortedWeeks.map((wk, wi) => {
+          const wd = weekMap[wk]; const pv = sortedWeeks[wi + 1] ? weekMap[sortedWeeks[wi + 1]] : null;
+          const dS = pv ? wd.tS - pv.tS : null; const dR = pv ? wd.tR - pv.tR : null;
+          const op = expWeeks[wk];
+          return <div key={wk} style={{ background: C.cd, borderRadius: 10, border: "1px solid " + C.bd, marginBottom: 10, overflow: "hidden" }}>
+            <div onClick={() => setExpWeeks(p => ({ ...p, [wk]: !p[wk] }))} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", cursor: "pointer" }}>
+              <div><div style={{ fontWeight: 700, fontSize: 14, fontFamily: "monospace" }}>{wk}</div><div style={{ fontSize: 11, color: C.mt }}>{wd.days.size} day{wd.days.size !== 1 ? "s" : ""}</div></div>
+              <div style={{ display: "flex", gap: 18 }}>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: 17, fontWeight: 800, color: C.ac, fontFamily: "monospace" }}>{wd.tS}</div><div style={{ fontSize: 9, color: C.mt, letterSpacing: 1.5 }}>SETS</div>{dS !== null && <div style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", color: dS >= 0 ? C.gr : C.rd }}>{dS >= 0 ? "+" : ""}{dS}</div>}</div>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: 17, fontWeight: 800, color: C.ac, fontFamily: "monospace" }}>{wd.tR}</div><div style={{ fontSize: 9, color: C.mt, letterSpacing: 1.5 }}>REPS</div>{dR !== null && <div style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", color: dR >= 0 ? C.gr : C.rd }}>{dR >= 0 ? "+" : ""}{dR}</div>}</div>
               </div>
+              <span style={{ color: "#666", fontSize: 14 }}>{op ? "▾" : "▸"}</span>
             </div>
-            {ents.map(([ex,sets])=><div key={ex} style={{marginBottom:4}}><span style={{fontSize:12,fontWeight:700}}>{ex}</span><br/><span style={{fontSize:11,color:C.mut}}>{sets.map(s=>(s.reps||"–")+"×"+(s.weight||"–")).join("  ·  ")}</span></div>)}
+            {op && <div style={{ padding: "0 14px 12px", borderTop: "1px solid " + C.bd }}>
+              {wd.entries.sort().map(k => {
+                const [d, ...r] = k.split("::"); const dd = data[k]; const ents = Object.entries(dd).filter(([, s]) => s && s.length);
+                return <div key={k} style={{ padding: "8px 0", borderBottom: "1px solid " + C.bd }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.ac }}>{fmtDate(d)}</span>
+                    <span style={{ fontSize: 11, color: C.mt }}>{r.join("::").replace(/Day \d+ — /, "").split("(")[0]}</span>
+                  </div>
+                  {ents.map(([ex, sets]) => <div key={ex} style={{ fontSize: 12, marginTop: 2 }}>
+                    <span style={{ color: "#aaa" }}>{ex}: </span>
+                    <span style={{ fontSize: 11, color: "#777" }}>{sets.map(s => (s.reps || "–") + "×" + (s.weight || "–")).join(", ")}</span>
+                  </div>)}
+                </div>;
+              })}
+            </div>}
           </div>;
         })}
       </div>}
-
-      {/* ═══ WEEKLY */}
-      {view==="weekly"&&<div style={{padding:"16px 14px"}}>
-        <div style={T.secTitle}>Week-over-Week</div>
-        {!sWeeks.length&&<div style={{color:C.mut,fontSize:13,textAlign:"center",padding:40}}>No data yet.</div>}
-        {sWeeks.map((wk,wi)=>{const wd=wkMap[wk];const pv=sWeeks[wi+1]?wkMap[sWeeks[wi+1]]:null;const dS=pv?wd.tS-pv.tS:null;const dR=pv?wd.tR-pv.tR:null;const op=expWeeks[wk];
-          return <div key={wk} style={{background:C.card,borderRadius:10,border:"1px solid "+C.brd,marginBottom:10,overflow:"hidden"}}>
-            <div onClick={()=>setExpWeeks(p=>({...p,[wk]:!p[wk]}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",cursor:"pointer"}}>
-              <div><div style={{fontWeight:700,fontSize:14,fontFamily:"monospace"}}>{wk}</div><div style={{fontSize:11,color:C.mut}}>{wd.days.size} day{wd.days.size!==1?"s":""}</div></div>
-              <div style={{display:"flex",gap:18}}>
-                <div style={{textAlign:"center"}}><div style={{fontSize:17,fontWeight:800,color:C.acc,fontFamily:"monospace"}}>{wd.tS}</div><div style={{fontSize:9,color:C.mut,letterSpacing:1.5}}>SETS</div>{dS!==null&&<div style={{fontSize:10,fontWeight:700,fontFamily:"monospace",color:dS>=0?"#5ec98e":"#e86060"}}>{dS>=0?"+":""}{dS}</div>}</div>
-                <div style={{textAlign:"center"}}><div style={{fontSize:17,fontWeight:800,color:C.acc,fontFamily:"monospace"}}>{wd.tR}</div><div style={{fontSize:9,color:C.mut,letterSpacing:1.5}}>REPS</div>{dR!==null&&<div style={{fontSize:10,fontWeight:700,fontFamily:"monospace",color:dR>=0?"#5ec98e":"#e86060"}}>{dR>=0?"+":""}{dR}</div>}</div>
+ 
+      {/* ═══ PROGRAM ═══ */}
+      {view === "program" && <div style={{ padding: "16px 14px" }}>
+        <div style={T.sec}>{program.name}</div>
+        <div style={{ fontSize: 12, color: C.mt, lineHeight: 1.6, marginBottom: 12 }}>{program.desc}</div>
+        <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+          {PHASES.map(p => <div key={p.name} style={{ padding: "8px 6px", borderRadius: 6, border: "2px solid " + (p.name === phase.name ? p.color : "transparent"), background: p.color + "15", textAlign: "center", flex: p.weeks.length, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: p.color }}>{p.name}</span>
+            <span style={{ fontSize: 9, color: C.mt }}>W{p.weeks[0]}-{p.weeks[p.weeks.length - 1]}</span>
+          </div>)}
+        </div>
+        {daysOrder.map(day => <div key={day} style={{ ...T.card, padding: 14 }}>
+          <div style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: C.ac, letterSpacing: 1, marginBottom: 10, textTransform: "uppercase" }}>{day}</div>
+          {program.days[day].map((ex, ei) => {
+            if (ex.cat === "divider") return <div key={ex.name + ei} style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0 6px" }}>
+              <div style={{ flex: 1, height: 1, background: C.bd }} />
+              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 2, color: C.mt, fontFamily: "monospace" }}>{ex.name.replace(/—/g, "").trim()}</span>
+              <div style={{ flex: 1, height: 1, background: C.bd }} />
+            </div>;
+            const cc = CAT_COLORS[ex.cat] || CAT_COLORS.main;
+            const rx = phaseRx(ex.sets, ex.reps, ex.cat, phase);
+            return <div key={ex.name} style={{ marginBottom: 8, paddingBottom: 8, paddingLeft: 8, borderBottom: "1px solid " + C.bd, borderLeft: "3px solid " + cc }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: cc }}>{ei + 1}.</span>
+                <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{ex.name}</span>
+                <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: phase.color }}>{rx.sets}×{rx.reps}</span>
               </div>
-              <span style={{color:"#666",fontSize:14}}>{op?"▾":"▸"}</span>
-            </div>
-            {op&&<div style={{padding:"0 14px 12px",borderTop:"1px solid "+C.brd}}>{wd.entries.sort().map(k=>{const[d,...r]=k.split("::");const dd=data[k];const ents=Object.entries(dd).filter(([,s])=>s&&s.length);
-              return <div key={k} style={{padding:"8px 0",borderBottom:"1px solid "+C.brd}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:12,fontWeight:700,color:C.acc}}>{fmtDate(d)}</span><span style={{fontSize:11,color:C.mut}}>{r.join("::").replace(/Day \d+ — /,"").split("(")[0]}</span></div>
-                {ents.map(([ex,sets])=><div key={ex} style={{fontSize:12,marginTop:2}}><span style={{color:"#aaa"}}>{ex}:</span> <span style={{fontSize:11,color:"#777"}}>{sets.map(s=>(s.reps||"–")+"×"+(s.weight||"–")).join(", ")}</span></div>)}
-              </div>;})}</div>}
-          </div>;
-        })}
-      </div>}
-
-      {/* ═══ PROGRAM */}
-      {view==="program"&&<div style={{padding:"16px 14px"}}>
-        <div style={T.secTitle}>{program.name||"Your Program"}</div>
-        <div style={{fontSize:12,color:C.mut,lineHeight:1.6,marginBottom:12}}>{program.desc}</div>
-        <div style={{display:"flex",gap:4,marginBottom:14}}>{PHASES.map(p=><div key={p.name} style={{padding:"8px 6px",borderRadius:6,border:"2px solid "+(p.name===phase.name?p.color:"transparent"),background:p.color+"15",textAlign:"center",flex:p.weeks.length,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-          <span style={{fontSize:14,color:p.color}}>{p.icon}</span><span style={{fontSize:10,fontWeight:800,color:p.color}}>{p.name}</span><span style={{fontSize:9,color:C.mut}}>W{p.weeks[0]}-{p.weeks[p.weeks.length-1]}</span>
-        </div>)}</div>
-        {daysOrder.map(day=><div key={day} style={{background:C.card,borderRadius:10,border:"1px solid "+C.brd,padding:14,marginBottom:12}}>
-          <div style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:C.acc,letterSpacing:1,marginBottom:10,textTransform:"uppercase"}}>{day}</div>
-          {program.days[day].map((ex,ei)=>{
-            if(ex.cat==="divider") return <div key={ex.name+ei} style={{display:"flex",alignItems:"center",gap:10,margin:"10px 0 6px"}}><div style={{flex:1,height:1,background:C.brd}}/><span style={{fontSize:10,fontWeight:800,letterSpacing:2,color:C.mut,fontFamily:"monospace"}}>{ex.name.replace(/—/g,"").trim()}</span><div style={{flex:1,height:1,background:C.brd}}/></div>;
-            const cc=CAT_COLORS[ex.cat]||CAT_COLORS.main;const rx=phaseRx(ex.sets,ex.reps,ex.cat,phase);
-            return <div key={ex.name} style={{marginBottom:8,paddingBottom:8,paddingLeft:8,borderBottom:"1px solid "+C.brd,borderLeft:"3px solid "+cc}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
-                <span style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:cc}}>{ei+1}.</span>
-                <span style={{fontWeight:700,fontSize:13,flex:1}}>{ex.name}</span>
-                <span style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:phase.color}}>{rx.sets}×{rx.reps}</span>
-              </div>
-              {ex.form&&<div style={{fontSize:11,color:"#9a958f",lineHeight:1.5,paddingLeft:20}}>{ex.form}</div>}
+              {ex.form && <div style={{ fontSize: 11, color: "#9a958f", lineHeight: 1.5, paddingLeft: 20 }}>{ex.form}</div>}
             </div>;
           })}
         </div>)}
       </div>}
-
-      {/* ═══ SETTINGS */}
-      {view==="config"&&<div style={{padding:"16px 14px"}}>
-        <div style={T.secTitle}>Settings</div>
-        <div style={{...T.card,borderColor:"#5ec98e33"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span>🟢</span><span style={{fontWeight:700}}>Storage: IndexedDB (auto-saving)</span></div></div>
-        <div style={T.card}><div style={{fontWeight:700,marginBottom:4}}>Export</div><div style={{fontSize:11,color:C.mut}}>{Object.keys(data).length} sessions · {Object.keys(completed).length} completed</div><button onClick={exportD} style={{...T.expBtn,marginTop:10}}>📋 Export to Clipboard</button></div>
-        <div style={T.card}><div style={{fontWeight:700,marginBottom:4}}>Import</div><textarea value={importText} onChange={e=>setImportText(e.target.value)} placeholder="Paste data..." style={T.impArea}/><button onClick={()=>importD(importText)} disabled={!importText.trim()} style={{...T.expBtn,marginTop:6,opacity:importText.trim()?1:.4}}>📥 Import</button></div>
-        <div style={T.card}><div style={{fontWeight:700,marginBottom:4}}>Start Date</div><input type="date" value={config.startDate} onChange={e=>setConfig(c=>({...c,startDate:e.target.value}))} style={{width:"100%",background:C.inp,border:"1px solid "+C.brd,borderRadius:8,padding:"10px 14px",color:C.acc,fontSize:14,fontWeight:700,fontFamily:"monospace"}}/><div style={{marginTop:8,fontSize:12,color:C.mut}}>Current: <span style={{fontWeight:700,color:phase.color}}>{phase.icon} {phase.name} — W{cw}/10</span></div></div>
-        <div style={T.card}><div style={{fontWeight:700,marginBottom:4}}>Program</div><div style={{fontSize:11,color:C.mut,marginBottom:8}}>{program.name} — {daysOrder.length} days</div><button onClick={async()=>{if(confirm("Switch program?")){setProgram(null);await dbSet("program",null);setScreen("landing");}}} style={T.expBtn}>Switch Program</button></div>
-        <div style={{...T.card,borderColor:"#e8606033"}}><div style={{fontWeight:700,color:"#e86060",marginBottom:4}}>Danger Zone</div><button onClick={()=>{if(confirm("Reset ALL data?")){setData({});setCompleted({});dbSet("data",{});dbSet("completed",{});flash("Cleared");}}} style={{background:"none",border:"1px solid #e86060",color:"#e86060",borderRadius:8,padding:"10px 24px",fontWeight:700,fontSize:12,cursor:"pointer"}}>Reset All Data</button></div>
+ 
+      {/* ═══ SETTINGS ═══ */}
+      {view === "config" && <div style={{ padding: "16px 14px" }}>
+        <div style={T.sec}>Settings</div>
+        <div style={{ ...T.card, borderColor: "#5ec98e33" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span>🟢</span><span style={{ fontWeight: 700 }}>Storage: IndexedDB (auto-saving)</span></div>
+        </div>
+        <div style={T.card}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Export</div>
+          <div style={{ fontSize: 11, color: C.mt }}>{Object.keys(data).length} sessions · {Object.keys(completed).length} completed</div>
+          <button onClick={exportData} style={{ ...T.exp, marginTop: 10 }}>📋 Export to Clipboard</button>
+        </div>
+        <div style={T.card}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Import</div>
+          <textarea value={importText} onChange={e => setImportText(e.target.value)} placeholder="Paste data..." style={{ width: "100%", minHeight: 70, background: C.ip, border: "1px solid " + C.bd, borderRadius: 8, color: C.tx, padding: 10, fontSize: 11, marginTop: 8, resize: "vertical" }} />
+          <button onClick={() => importData(importText)} disabled={!importText.trim()} style={{ ...T.exp, marginTop: 6, opacity: importText.trim() ? 1 : .4 }}>📥 Import</button>
+        </div>
+        <div style={T.card}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Program Start Date</div>
+          <div style={{ fontSize: 11, color: C.mt, marginBottom: 8 }}>Sets your periodization week. Default lands you in Build (Phase 2).</div>
+          <input type="date" value={config.startDate} onChange={e => setConfig(c => ({ ...c, startDate: e.target.value }))} style={{ width: "100%", background: C.ip, border: "1px solid " + C.bd, borderRadius: 8, padding: "10px 14px", color: C.ac, fontSize: 14, fontWeight: 700, fontFamily: "monospace" }} />
+          <div style={{ marginTop: 8, fontSize: 12, color: C.mt }}>Current: <span style={{ fontWeight: 700, color: phase.color }}>{phase.name} — W{cw}/10</span></div>
+        </div>
+        <div style={T.card}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Rest Timer Presets</div>
+          <div style={{ fontSize: 11, color: C.mt }}>Strength sets (6-8 reps) need 2-3 min. Use the floating timer button on the TRAIN tab.</div>
+        </div>
+        <div style={T.card}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Program</div>
+          <div style={{ fontSize: 11, color: C.mt, marginBottom: 8 }}>{program.name} v2 — {daysOrder.length} days</div>
+          <button onClick={async () => { if (confirm("Switch program? Your workout data is kept.")) { setProgram(null); await dbSet("program", null); setScreen("landing"); } }} style={T.exp}>Switch Program</button>
+        </div>
+        <div style={{ ...T.card, borderColor: "#e8606033" }}>
+          <div style={{ fontWeight: 700, color: C.rd, marginBottom: 4 }}>Danger Zone</div>
+          <button onClick={() => { if (confirm("Reset ALL workout data?")) { setData({}); setCompleted({}); dbSet("data", {}); dbSet("completed", {}); flash("Cleared"); } }} style={{ background: "none", border: "1px solid " + C.rd, color: C.rd, borderRadius: 8, padding: "10px 24px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Reset All Data</button>
+        </div>
+      </div>}
+ 
+      {/* ═══ REST TIMER (floating) ═══ */}
+      {view === "train" && <div style={{ position: "fixed", bottom: "calc(16px + env(safe-area-inset-bottom,0px))", right: 16, zIndex: 200, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+        {timerOpen && !timerEnd && <div style={{ display: "flex", gap: 6, background: C.cd, border: "1px solid " + C.bd, borderRadius: 10, padding: 8 }}>
+          {[[90, "1:30"], [120, "2:00"], [180, "3:00"]].map(([s, l]) =>
+            <button key={s} onClick={() => startTimer(s)} style={{ background: C.aD, color: C.ac, border: "1px solid " + C.ac, borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 13, fontFamily: "monospace", cursor: "pointer" }}>{l}</button>
+          )}
+        </div>}
+        {timerEnd ? (
+          <button onClick={() => { setTimerEnd(null); setTimerOpen(false); }} style={{ background: timerDone ? C.gr : C.cd, border: "2px solid " + (timerDone ? C.gr : C.ac), borderRadius: 12, padding: "12px 20px", fontWeight: 800, fontSize: 18, fontFamily: "monospace", color: timerDone ? "#fff" : C.ac, cursor: "pointer", animation: timerDone ? "pulse 1s ease infinite" : "none" }}>
+            {timerDone ? "REST DONE ✕" : fmtTimer(timerLeft) + " ✕"}
+          </button>
+        ) : (
+          <button onClick={() => setTimerOpen(o => !o)} style={{ background: C.cd, border: "1px solid " + C.ac, borderRadius: "50%", width: 52, height: 52, fontSize: 22, color: C.ac, cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,0.4)" }}>⏱</button>
+        )}
       </div>}
     </div>
   );
 }
-
-const C2={bg:"#171a1f",card:"#1e2228",brd:"#2d333b",acc:"#d4a04a",accD:"rgba(212,160,74,0.14)",txt:"#ecede8",mut:"#8b8880",inp:"#252a31"};
-const T = {
-  toast:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:C2.acc,color:"#111",padding:"8px 24px",borderRadius:8,fontWeight:700,fontSize:13,zIndex:999,letterSpacing:.5},
-  dateArr:{background:C2.card,border:"1px solid "+C2.brd,color:C2.txt,width:36,height:36,borderRadius:8,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"},
-  inp:{background:C2.inp,border:"1px solid "+C2.brd,borderRadius:6,color:C2.txt,padding:"7px 8px",fontSize:14,fontWeight:600,width:68,textAlign:"center",outline:"none",fontFamily:"monospace"},
-  secTitle:{fontFamily:"monospace",fontSize:12,fontWeight:700,letterSpacing:2.5,color:C2.acc,marginBottom:14,textTransform:"uppercase"},
-  pill:{background:C2.accD,color:C2.acc,padding:"2px 9px",borderRadius:4,fontSize:11,fontWeight:700,fontFamily:"monospace"},
-  card:{background:C2.card,borderRadius:10,border:"1px solid "+C2.brd,padding:16,marginBottom:12},
-  expBtn:{width:"100%",padding:12,background:C2.accD,color:C2.acc,border:"1px solid "+C2.acc,borderRadius:8,fontWeight:700,fontSize:13,cursor:"pointer"},
-  impArea:{width:"100%",minHeight:70,background:C2.inp,border:"1px solid "+C2.brd,borderRadius:8,color:C2.txt,padding:10,fontSize:11,fontFamily:"monospace",marginTop:8,resize:"vertical",outline:"none"},
-};
-
+ 
 ReactDOM.render(<App />, document.getElementById("root"));
+ 
 </script>
 </body>
 </html>
+
+
